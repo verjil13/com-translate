@@ -256,12 +256,12 @@ class ProjectController:
         settings.beginGroup("main_page")
 
         # Load languages and convert back to current language
-        source_lang = settings.value("source_language", "Korean")
-        target_lang = settings.value("target_language", "English")
+        source_lang = settings.value("source_language", "Japanese")#Korean
+        target_lang = settings.value("target_language", "Russsian")#English
 
         # Use reverse mapping to get the translated language names
-        self.main.s_combo.setCurrentText(self.main.reverse_lang_mapping.get(source_lang, self.main.tr("Korean")))
-        self.main.t_combo.setCurrentText(self.main.reverse_lang_mapping.get(target_lang, self.main.tr("English")))
+        self.main.s_combo.setCurrentText(self.main.reverse_lang_mapping.get(source_lang, self.main.tr("Japanese")))#Korean
+        self.main.t_combo.setCurrentText(self.main.reverse_lang_mapping.get(target_lang, self.main.tr("Russian")))#English
 
         mode = settings.value("mode", "manual")
         if mode == "manual":
@@ -295,8 +295,8 @@ class ProjectController:
         self.main.alignment_tool_group.set_dayu_checked(alignment)
 
         self.main.font_dropdown.setCurrentText(settings.value('font_family', ''))
-        min_font_size = settings.value('min_font_size', 5)  # Default value is 5
-        max_font_size = settings.value('max_font_size', 40) # Default value is 40
+        min_font_size = settings.value('min_font_size', 11)  # Default value is 5
+        max_font_size = settings.value('max_font_size', 18) # Default value is 40
         self.main.settings_page.ui.min_font_spinbox.setValue(int(min_font_size))
         self.main.settings_page.ui.max_font_spinbox.setValue(int(max_font_size))
 

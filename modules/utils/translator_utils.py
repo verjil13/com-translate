@@ -24,7 +24,7 @@ MODEL_MAP = {
 def encode_image_array(img_array: np.ndarray):
     img_bytes = imk.encode_image(img_array, ".png")
     return base64.b64encode(img_bytes).decode('utf-8')
-
+'''
 def get_raw_text(blk_list: list[TextBlock]):
     rw_txts_dict = {}
     for idx, blk in enumerate(blk_list):
@@ -34,7 +34,72 @@ def get_raw_text(blk_list: list[TextBlock]):
     raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
     
     return raw_texts_json
+'''
+def extract_translations_from_llm(content: str) -> dict[int, str]:
+    """
+    Извлекает block_N -> перевод из LLM-ответа,
+    даже если JSON синтаксически битый.
+    """
+    result = {}
 
+    for match in re.finditer(
+        r'"block_(\d+)"\s*:\s*"([^"]*)"',
+        content
+    ):
+        idx = int(match.group(1))
+        text = match.group(2)
+        result[idx] = text
+
+    return result
+
+
+def apply_translations_to_blocks(
+    blk_list: list[TextBlock],
+    translations: dict[int, str]
+):
+    for idx, blk in enumerate(blk_list):
+        if idx in translations:
+            blk.translation = translations[idx]
+        else:
+            print(f"Warning: block_{idx} not found in LLM response.")
+            
+
+
+
+
+def normalize_repeating_chars(text: str, max_repeat: int = 5) -> str:
+    """
+    Обрезает повторяющиеся символы:
+    あああああああ → あああああ
+    ーーーーーーー → ーーーーー
+    """
+    if not text:
+        return text
+
+    pattern = rf"(.)\1{{{max_repeat},}}"
+    return re.sub(pattern, lambda m: m.group(1) * max_repeat, text)
+
+def get_raw_text(blk_list: list[TextBlock]):
+    rw_txts_dict = {}
+    for idx, blk in enumerate(blk_list):
+        block_key = f"block_{idx}"
+
+        text = blk.text
+        text = normalize_repeating_chars(text, max_repeat=5)
+
+        rw_txts_dict[block_key] = text
+
+    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
+    '''
+    print("\n" + "═" * 80)
+    print(f"БЛОКИ, КОТОРЫЕ ОТПРАВЯТСЯ В LLM ({len(blk_list)} шт)")
+    print(f"Ключи: {list(rw_txts_dict.keys())}")
+    print("-" * 60)
+    print(raw_texts_json)
+    print("═" * 80 + "\n")
+    '''
+    return raw_texts_json
+    
 def get_raw_translation(blk_list: list[TextBlock]):
     rw_translations_dict = {}
     for idx, blk in enumerate(blk_list):
@@ -45,21 +110,72 @@ def get_raw_translation(blk_list: list[TextBlock]):
     
     return raw_translations_json
 
+def fix_llm_block_commas(s: str) -> str:
+    # 1. Точка вместо запятой между блоками:
+    # "text".
+    # "block_3":
+    s = re.sub(
+        r'"\.\s*(?=\n\s*"block_\d+")',
+        r'",',
+        s
+    )
+
+    # 2. Пропущенная запятая между блоками:
+    # "block_1": "text"
+    # "block_2":
+    s = re.sub(
+        r'("block_\d+"\s*:\s*"[^"]*")\s*\n\s*(?="block_\d+")',
+        r'\1,\n',
+        s
+    )
+
+    return s
+
+
 def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
-    match = re.search(r"\{[\s\S]*\}", json_string)
-    if match:
-        # Extract the JSON string from the matched regular expression
-        json_string = match.group(0)
-        translation_dict = json.loads(json_string)
-        
+    """
+    Основная точка входа для применения перевода от LLM.
+    1) Пытаемся распарсить JSON строго
+    2) Если не получилось — fallback через regex-извлечение
+    """
+
+    if not json_string:
+        print("Empty LLM response.")
+        return
+
+    # --- 1. Попытка строгого JSON ---
+    try:
+        # вырезаем JSON-объект, если есть лишний текст
+        match = re.search(r"\{[\s\S]*\}", json_string)
+        if match:
+            raw_json = match.group(0)
+        else:
+            raise json.JSONDecodeError("No JSON object", json_string, 0)
+
+        translation_dict = json.loads(raw_json)
+
+        # успешно — применяем как раньше
         for idx, blk in enumerate(blk_list):
-            block_key = f"block_{idx}"
-            if block_key in translation_dict:
-                blk.translation = translation_dict[block_key]
+            key = f"block_{idx}"
+            if key in translation_dict:
+                blk.translation = translation_dict[key]
             else:
-                print(f"Warning: {block_key} not found in JSON string.")
-    else:
-        print("No JSON found in the input string.")
+                print(f"Warning: {key} not found in JSON.")
+
+        return  # ← ВАЖНО: выходим, fallback не нужен
+
+    except json.JSONDecodeError:
+        # идём в fallback
+        pass
+
+    # --- 2. Fallback: извлекаем переводы из битого JSON ---
+    translations = extract_translations_from_llm(json_string)
+
+    if not translations:
+        print("❌ Failed to extract any translations from LLM response.")
+        return
+
+    apply_translations_to_blocks(blk_list, translations)
 
 def set_upper_case(blk_list: list[TextBlock], upper_case: bool):
     for blk in blk_list:
@@ -107,6 +223,12 @@ def format_translations(blk_list: list[TextBlock], trg_lng_cd: str, upper_case: 
                 blk.translation = translation.lower().capitalize()
             else:
                 blk.translation = translation
+
+
+
+
+
+
 
 def is_there_text(blk_list: list[TextBlock]) -> bool:
     return any(blk.text for blk in blk_list)

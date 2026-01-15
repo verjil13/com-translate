@@ -25,7 +25,7 @@ class TextRenderingPage(QtWidgets.QWidget):
         self.max_font_spinbox = MSpinBox().small()
         self.max_font_spinbox.setFixedWidth(60)
         self.max_font_spinbox.setMaximum(100)
-        self.max_font_spinbox.setValue(40)
+        self.max_font_spinbox.setValue(18)
 
         min_font_layout.addWidget(min_font_label)
         min_font_layout.addWidget(self.min_font_spinbox)

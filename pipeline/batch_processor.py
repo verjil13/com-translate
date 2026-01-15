@@ -336,7 +336,7 @@ class BatchProcessor:
                 x1, y1, width, height = blk.xywh
 
                 translation = blk.translation
-                if not translation or len(translation) == 1:
+                if not translation or len(translation) == 0: #1
                     continue
 
                 translation, font_size = pyside_word_wrap(translation, font, width, height,
