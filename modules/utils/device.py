@@ -217,4 +217,4 @@ class MangaOCRONNX:
         text = ''.join(text.split())
         text = text.replace('…', '...')
         text = re.sub('[・.]{2,}', lambda x: (x.end() - x.start()) * '.', text)
-        return jaconv.h2z(text, ascii=True, digit=True)
+        return jaconv.h2z(text, ascii=True, digit=True) 
