@@ -193,6 +193,7 @@ class TorchFontEngine(FontEngine):
 class ONNXFontEngine(FontEngine):
     def initialize(self, device=None, **kwargs) -> None:
         model_path = ModelDownloader.get_file_path(ModelID.FONT_DETECTOR_ONNX, 'font-detector.onnx')
+        #model_path = ModelDownloader.get_file_path(ModelID.RTDETRV2_ONNX, 'detector.onnx')
         if not os.path.exists(model_path):
             print(f"Warning: Font detection ONNX model not found at {model_path}")
             self.session = None

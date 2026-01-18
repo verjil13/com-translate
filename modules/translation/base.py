@@ -135,13 +135,18 @@ class LLMTranslation(TranslationEngine):
         - Each key represents a fixed dialogue position.
         - Translate ONLY the values.
         - DO NOT change, add, remove, rename, or reorder keys.
-        - Return ALL keys exactly as provided.        
+        - Return ALL keys exactly as provided. 
+        -ALWAYS follow ###Answering rules###
+        
+        ###Answering Rules###
+        
         For each block:
             - If it is already in {target_lang} or looks like gibberish, OUTPUT IT AS IT IS.
             - DO NOT provide explanations.
-            - DO NOT combine text from different blocks.
+            - DO NOT combine text from different blocks, even if it is the same sentence in meaning.
             - DO NOT swap the text from different blocks. 
             - DO NOT soften expressions or change the meaning of the text.
+            - DO NOT use the censor *,**,@ for swearing.
             - Translate each block in order.
         If the string contains untranslatable characters, it is garbage for text recognition or unknown characters:
         - Leave these symbols UNCHANGED.      
