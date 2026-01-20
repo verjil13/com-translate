@@ -54,6 +54,13 @@ def normalize_repeating_chars_advanced(text: str) -> str:
 
     if not text:
         return text
+        
+    # --- 0) Удаление мусора в начале строки ---
+    text = re.sub(
+        r'^[\s!！?？\.．…‥・,，。]+',
+        '',
+        text
+    )    
 
     # --- 4) Конструкции, которые удаляем полностью ---
     patterns_to_remove = ["$/#", "$/#/$/#/"]
@@ -94,6 +101,12 @@ def get_raw_text(blk_list: list[TextBlock]):
 def post_process_translation(text: str) -> str:
     if not text:
         return text
+    
+    text = re.sub(
+        r'^[\s!！?？\.．…‥・,，。~]+',
+        '',
+        text
+    )    
 
     # --- 1) Ограничение повторов всех символов до 3 ---
     text = re.sub(r"(.)\1{3,}", lambda m: m.group(1) * 3, text)
