@@ -345,6 +345,8 @@ def get_smart_text_color(detected_rgb: tuple, setting_color: QColor) -> QColor:
     Determines the best text color to use based on the detected color from the image
     and the user's preferred setting color. Prevents invisible text (e.g. white on white).
     """
+    return setting_color #
+    
     if not detected_rgb:
         return setting_color
 
