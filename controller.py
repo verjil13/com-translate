@@ -2,6 +2,7 @@ import os
 import numpy as np
 import shutil
 import tempfile
+import re
 from typing import Callable, Tuple
 
 from PySide6 import QtCore
@@ -238,7 +239,36 @@ class ComicTranslate(ComicTranslateUI):
                 self.blk_list,
             )
             self.undo_group.activeStack().push(command)
-
+            
+    ##########################################        
+    def auto_delete_trash_blocks(self):
+        if not self.blk_list:
+            return
+    
+        #TRASH_RE = re.compile(r'^[\s.!?…！？。、,]+$')
+        TRASH_RE = re.compile(r'^[\s.!?…！？。、,．]+$')
+    
+        before = len(self.blk_list)
+        new_blk_list = []
+    
+        for blk in self.blk_list:
+            text = (blk.text or "").strip()
+            if not text:
+                continue
+    
+            if TRASH_RE.fullmatch(text):
+                print(f"🗑 Auto-deleted trash block: '{text}'")
+                continue
+    
+            new_blk_list.append(blk)
+    
+        self.blk_list = new_blk_list
+    
+        after = len(self.blk_list)
+        if before != after:
+            print(f"🧹 Trash blocks removed: {before - after}")   
+            
+    ##########################################################
     def batch_mode_selected(self):
         self.disable_hbutton_group()
         self.translate_button.setEnabled(True)
@@ -397,6 +427,7 @@ class ComicTranslate(ComicTranslateUI):
         self.enable_hbutton_group()
 
     def start_batch_process(self):
+        #self.auto_delete_trash_blocks() #
         for image_path in self.image_files:
             source_lang = self.image_states[image_path]['source_lang']
             target_lang = self.image_states[image_path]['target_lang']
@@ -477,6 +508,8 @@ class ComicTranslate(ComicTranslateUI):
                           self.default_error_handler, self.on_manual_finished, load_rects)
 
     def finish_ocr_translate(self, single_block=False):
+        self.auto_delete_trash_blocks()
+        
         if self.blk_list:
             if single_block:
                 rect = self.image_viewer.selected_rect
@@ -517,10 +550,13 @@ class ComicTranslate(ComicTranslateUI):
             )
 
     def translate_image(self, single_block=False):
+        #self.auto_delete_trash_blocks() #автоудаление блоков
+        
         source_lang = self.s_combo.currentText()
         target_lang = self.t_combo.currentText()
         if not is_there_text(self.blk_list) or not validate_translator(self, source_lang, target_lang):
-            return
+            return       
+            
         self.loading.setVisible(True)
         self.disable_hbutton_group()
         
