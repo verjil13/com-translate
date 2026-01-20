@@ -8,7 +8,6 @@ from pythainlp.tokenize import word_tokenize
 from .textblock import TextBlock
 import imkit as imk
 
-
 MODEL_MAP = {
     "Custom": "",  
     "Deepseek-v3": "deepseek-chat", 
@@ -24,128 +23,127 @@ MODEL_MAP = {
 def encode_image_array(img_array: np.ndarray):
     img_bytes = imk.encode_image(img_array, ".png")
     return base64.b64encode(img_bytes).decode('utf-8')
-'''
-def get_raw_text(blk_list: list[TextBlock]):
-    rw_txts_dict = {}
-    for idx, blk in enumerate(blk_list):
-        block_key = f"block_{idx}"
-        rw_txts_dict[block_key] = blk.text
-    
-    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
-    
-    return raw_texts_json
-'''
-def extract_translations_from_llm(content: str) -> dict[int, str]:
-    """
-    Извлекает block_N -> перевод из LLM-ответа,
-    даже если JSON синтаксически битый.
-    """
-    result = {}
 
-    for match in re.finditer(
-        r'"block_(\d+)"\s*:\s*"([^"]*)"',
-        content
-    ):
+
+def extract_translations_from_llm(content: str) -> dict[int, str]:
+    result = {}
+    for match in re.finditer(r'"block_(\d+)"\s*:\s*"([^"]*)"', content):
         idx = int(match.group(1))
         text = match.group(2)
         result[idx] = text
-
     return result
 
 
-def apply_translations_to_blocks(
-    blk_list: list[TextBlock],
-    translations: dict[int, str]
-):
+def apply_translations_to_blocks(blk_list: list[TextBlock], translations: dict[int, str]):
     for idx, blk in enumerate(blk_list):
         if idx in translations:
             blk.translation = translations[idx]
         else:
             print(f"Warning: block_{idx} not found in LLM response.")
-            
 
 
-
-
-def normalize_repeating_chars(text: str, max_repeat: int = 5) -> str:
+def normalize_repeating_chars_advanced(text: str) -> str:
     """
-    Обрезает повторяющиеся символы:
-    あああああああ → あああああ
-    ーーーーーーー → ーーーーー
+    Расширенная нормализация повторяющихся символов:
+
+    1) Для символов типа ~ оставляем 1 повтор.
+    2) Для символов типа あ оставляем 2 повтора.
+    3) Для всех остальных символов оставляем максимум 3 повторов.
+    4) Удаляем полностью конструкции, например $/# или $/#/$/#/.
     """
+
     if not text:
         return text
 
-    pattern = rf"(.)\1{{{max_repeat},}}"
-    return re.sub(pattern, lambda m: m.group(1) * max_repeat, text)
+    # --- 4) Конструкции, которые удаляем полностью ---
+    patterns_to_remove = ["$/#", "$/#/$/#/"]
+    for pat in patterns_to_remove:
+        text = text.replace(pat, "")
+
+    # --- 1) Особые символы, оставляем по 1 ---
+    special_one = "~!@#$%^&*"
+    if special_one:
+        pattern = rf"([{re.escape(special_one)}])\1+"
+        text = re.sub(pattern, r"\1", text)
+
+    # --- 2) Особые символы, оставляем по 2 ---
+    special_two = "あいうえおアイウエオ"
+    if special_two:
+        pattern = rf"([{re.escape(special_two)}])\1{{2,}}"
+        text = re.sub(pattern, lambda m: m.group(1) * 2, text)
+
+    # --- 3) Все остальные символы, оставляем максимум 3 повторов ---
+    pattern = r"(.)\1{3,}"
+    text = re.sub(pattern, lambda m: m.group(1) * 3, text)
+
+    return text
+
 
 def get_raw_text(blk_list: list[TextBlock]):
     rw_txts_dict = {}
     for idx, blk in enumerate(blk_list):
         block_key = f"block_{idx}"
-
         text = blk.text
-        text = normalize_repeating_chars(text, max_repeat=5)
-
+        text = normalize_repeating_chars_advanced(text)  # исправлено
         rw_txts_dict[block_key] = text
 
     raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
-    '''
-    print("\n" + "═" * 80)
-    print(f"БЛОКИ, КОТОРЫЕ ОТПРАВЯТСЯ В LLM ({len(blk_list)} шт)")
-    print(f"Ключи: {list(rw_txts_dict.keys())}")
-    print("-" * 60)
-    print(raw_texts_json)
-    print("═" * 80 + "\n")
-    '''
     return raw_texts_json
-    
+
+
+def post_process_translation(text: str) -> str:
+    if not text:
+        return text
+
+    # --- 1) Ограничение повторов всех символов до 3 ---
+    text = re.sub(r"(.)\1{3,}", lambda m: m.group(1) * 3, text)
+
+    # --- 2) Удаление шумных символов в начале предложения ---
+    # Шумные символы, которые могут встречаться в начале:
+    noisy_start_patterns = [
+        r"^[!！?？．…。~]+",  # любые комбинации знаков ! ? . … ~ в начале
+        r"^[。、]{1,3}",      # японские и китайские точки/запятые в начале
+    ]
+
+    for pat in noisy_start_patterns:
+        text = re.sub(pat, "", text)
+
+    # Убираем пробелы слева после удаления
+    text = text.lstrip()
+
+    return text
+'''
 def get_raw_translation(blk_list: list[TextBlock]):
     rw_translations_dict = {}
     for idx, blk in enumerate(blk_list):
         block_key = f"block_{idx}"
         rw_translations_dict[block_key] = blk.translation
-    
-    raw_translations_json = json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
-    
-    return raw_translations_json
+
+    return json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
+'''
+def get_raw_translation(blk_list: list[TextBlock]) -> str:
+    rw_translations_dict = {}
+    for idx, blk in enumerate(blk_list):
+        block_key = f"block_{idx}"
+        if blk.translation:
+            rw_translations_dict[block_key] = post_process_translation(blk.translation)
+        else:
+            rw_translations_dict[block_key] = ""
+
+    return json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
 
 def fix_llm_block_commas(s: str) -> str:
-    # 1. Точка вместо запятой между блоками:
-    # "text".
-    # "block_3":
-    s = re.sub(
-        r'"\.\s*(?=\n\s*"block_\d+")',
-        r'",',
-        s
-    )
-
-    # 2. Пропущенная запятая между блоками:
-    # "block_1": "text"
-    # "block_2":
-    s = re.sub(
-        r'("block_\d+"\s*:\s*"[^"]*")\s*\n\s*(?="block_\d+")',
-        r'\1,\n',
-        s
-    )
-
+    s = re.sub(r'"\.\s*(?=\n\s*"block_\d+")', r'",', s)
+    s = re.sub(r'("block_\d+"\s*:\s*"[^"]*")\s*\n\s*(?="block_\d+")', r'\1,\n', s)
     return s
 
 
 def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
-    """
-    Основная точка входа для применения перевода от LLM.
-    1) Пытаемся распарсить JSON строго
-    2) Если не получилось — fallback через regex-извлечение
-    """
-
     if not json_string:
         print("Empty LLM response.")
         return
 
-    # --- 1. Попытка строгого JSON ---
     try:
-        # вырезаем JSON-объект, если есть лишний текст
         match = re.search(r"\{[\s\S]*\}", json_string)
         if match:
             raw_json = match.group(0)
@@ -153,29 +151,24 @@ def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
             raise json.JSONDecodeError("No JSON object", json_string, 0)
 
         translation_dict = json.loads(raw_json)
-
-        # успешно — применяем как раньше
         for idx, blk in enumerate(blk_list):
             key = f"block_{idx}"
             if key in translation_dict:
                 blk.translation = translation_dict[key]
             else:
                 print(f"Warning: {key} not found in JSON.")
-
-        return  # ← ВАЖНО: выходим, fallback не нужен
+        return
 
     except json.JSONDecodeError:
-        # идём в fallback
         pass
 
-    # --- 2. Fallback: извлекаем переводы из битого JSON ---
     translations = extract_translations_from_llm(json_string)
-
     if not translations:
         print("❌ Failed to extract any translations from LLM response.")
         return
 
     apply_translations_to_blocks(blk_list, translations)
+
 
 def set_upper_case(blk_list: list[TextBlock], upper_case: bool):
     for blk in blk_list:
@@ -183,18 +176,21 @@ def set_upper_case(blk_list: list[TextBlock], upper_case: bool):
         if translation is None:
             continue
         if upper_case and not translation.isupper():
-            blk.translation = translation.upper() 
+            blk.translation = translation.upper()
         elif not upper_case and translation.isupper():
             blk.translation = translation.lower().capitalize()
         else:
             blk.translation = translation
 
+
 def get_chinese_tokens(text):
     return list(jieba.cut(text, cut_all=False))
+
 
 def get_japanese_tokens(text):
     tokenizer = janome.tokenizer.Tokenizer()
     return [token.surface for token in tokenizer.tokenize(text)]
+
 
 def format_translations(blk_list: list[TextBlock], trg_lng_cd: str, upper_case: bool = True):
     for blk in blk_list:
@@ -204,17 +200,14 @@ def format_translations(blk_list: list[TextBlock], trg_lng_cd: str, upper_case: 
 
         if 'zh' in trg_lng_code_lower:
             seg_result = get_chinese_tokens(translation)
-
         elif 'ja' in trg_lng_code_lower:
             seg_result = get_japanese_tokens(translation)
-
         elif 'th' in trg_lng_code_lower:
             seg_result = word_tokenize(translation)
 
         if seg_result:
             blk.translation = ''.join(word if word in ['.', ','] else f' {word}' for word in seg_result).lstrip()
         else:
-            # apply casing/formatting for this single block when no segmentation is done
             if translation is None:
                 continue
             if upper_case and not translation.isupper():
@@ -223,11 +216,6 @@ def format_translations(blk_list: list[TextBlock], trg_lng_cd: str, upper_case: 
                 blk.translation = translation.lower().capitalize()
             else:
                 blk.translation = translation
-
-
-
-
-
 
 
 def is_there_text(blk_list: list[TextBlock]) -> bool:
