@@ -6,6 +6,7 @@ import logging
 import traceback
 import imkit as imk
 import time
+import re
 from datetime import datetime
 from typing import List
 from PySide6.QtGui import QColor
@@ -25,6 +26,10 @@ from app.ui.canvas.save_renderer import ImageSaveRenderer
 
 
 logger = logging.getLogger(__name__)
+
+##TRASH_RE = re.compile(r'^[\s.!?…！？。、．]+$')
+
+
 
 
 class BatchProcessor:
@@ -79,6 +84,35 @@ class BatchProcessor:
                 file.write(full_traceback + "\n")
             file.write("\n")
 
+    # --------------------------------------------------
+    # Функция для авто-удаления «мусорных» блоков
+    # --------------------------------------------------
+    def auto_delete_trash_blocks(self, blk_list: List) -> List:
+        """
+        Удаляет текстовые блоки, которые не содержат осмысленного текста:
+        - Только символы вроде '.', '!', '?', '…', '！？。、'
+        - Многоточия с пробелами, повторяющиеся знаки
+        """
+        # Регулярка для мусора: '.', '!', '?', '…', '！？。、', повторяющиеся, через пробелы
+        #TRASH_RE = re.compile(r'^(?:[\s.!?…！？。、]+|(?:[.!?…！？。、]+(?:\s+[.!?…！？。、]+)*))$')
+        TRASH_RE = re.compile(r'^[\s.!?…！？。、,．]+$')
+        new_blk_list = []
+        removed_count = 0
+        for blk in blk_list:
+            if blk.text and not TRASH_RE.fullmatch(blk.text.strip()):
+                new_blk_list.append(blk)
+            else:
+                removed_count += 1
+                logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+        if removed_count:
+            logger.info(f"🧹 Trash blocks removed: {removed_count}")
+            
+        print(321)    
+        return new_blk_list
+
+    # --------------------------------------------------
+    # Основной batch процесс
+    # --------------------------------------------------
     def batch_process(self, selected_paths: List[str] = None):
         timestamp = datetime.now().strftime("%b-%d-%Y_%I-%M-%S%p")
         image_list = selected_paths if selected_paths is not None else self.main_page.image_files
@@ -139,22 +173,24 @@ class BatchProcessor:
                 break
 
             if blk_list:
-                # Get ocr cache key for batch processing
+                # OCR и сортировка блоков
                 ocr_model = settings_page.get_tool_selection('ocr')
                 device = resolve_device(settings_page.is_gpu_enabled())
                 cache_key = self.cache_manager._get_ocr_cache_key(image, source_lang, ocr_model, device)
-                # Use the shared OCR processor from the handler
+
                 self.ocr_handler.ocr.initialize(self.main_page, source_lang)
                 try:
                     self.ocr_handler.ocr.process(image, blk_list)
-                    # Cache the OCR results for potential future use
                     self.cache_manager._cache_ocr_results(cache_key, self.main_page.blk_list)
                     source_lang_english = self.main_page.lang_mapping.get(source_lang, source_lang)
                     rtl = True if source_lang_english == 'Japanese' else False
                     blk_list = sort_blk_list(blk_list, rtl)
-                    
+
+                    # >>> ВАЖНО: удаляем мусорные блоки после OCR
+                    blk_list = self.auto_delete_trash_blocks(blk_list)
+                    self.main_page.blk_list = blk_list
+
                 except Exception as e:
-                    # if it's an HTTPError, try to pull the "error_description" field
                     if isinstance(e, requests.exceptions.HTTPError):
                         try:
                             err_json = e.response.json()
