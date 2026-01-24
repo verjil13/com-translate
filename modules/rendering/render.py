@@ -105,7 +105,7 @@ def pyside_word_wrap(
     if not text:
         return "", min_font_size
 
-    adjusted_width = roi_width * 1.1  # можно увеличивать, если нужно больше места
+    adjusted_width = roi_width * 1.25  # можно увеличивать, если нужно больше места
 
     # ----------------------------
     # Подготовка шрифта
@@ -297,8 +297,8 @@ def get_best_render_area(
         cur_h = cur_y2 - cur_y1
 
         # Центр пузыря
-        center_x = x1 + 1*box_w // 2
-        center_y = y1 + 1.2*box_h // 2
+        center_x = x1 + ((0.9 * box_w) // 2)
+        center_y = y1 + ((1.2 * box_h) // 2)
 
         # Новый bbox — по центру
         new_x1 = int(center_x - cur_w // 2)
