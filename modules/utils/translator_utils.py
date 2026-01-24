@@ -7,6 +7,7 @@ import numpy as np
 from pythainlp.tokenize import word_tokenize
 from .textblock import TextBlock
 import imkit as imk
+import unicodedata
 
 MODEL_MAP = {
     "Custom": "",  
@@ -74,6 +75,7 @@ def normalize_repeating_chars_advanced(text: str) -> str:
         text = re.sub(pattern, r"\1", text)
 
     # --- 2) Особые символы, оставляем по 2 ---
+    
     special_two = "あいうえおアイウエオ"
     if special_two:
         pattern = rf"([{re.escape(special_two)}])\1{{2,}}"
@@ -81,8 +83,20 @@ def normalize_repeating_chars_advanced(text: str) -> str:
 
     # --- 3) Все остальные символы, оставляем максимум 3 повторов ---
     pattern = r"(.)\1{3,}"
-    text = re.sub(pattern, lambda m: m.group(1) * 3, text)
+    text = re.sub(pattern, lambda m: m.group(1) * 3, text)   
 
+    # --- 5) Заменяем цензурированные слова по словарю ---
+    censored_dict = {
+        #"ま●こ": "まんこ",
+        "ま●こ": "pussy",
+        #"ち●こ": "ちんこ",
+        "ち●こ": "dick",  
+        # сюда можно добавлять новые слова
+    }
+    for censored, normal in censored_dict.items():
+        text = text.replace(censored, normal)    
+
+    
     return text
 
 
@@ -95,6 +109,7 @@ def get_raw_text(blk_list: list[TextBlock]):
         rw_txts_dict[block_key] = text
 
     raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
+    #print(raw_texts_json)
     return raw_texts_json
 
 
