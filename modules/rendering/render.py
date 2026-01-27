@@ -83,123 +83,100 @@ def pyside_word_wrap(
     text: str,
     font_input: str,
     roi_width: int,
-    roi_height: int,
-    line_spacing,
-    outline_width,
+    roi_height: int,  # оставлен для совместимости, но не используется
+    line_spacing=1.0,
+    outline_width=0,
     bold=False,
     italic=False,
     underline=False,
     alignment=Qt.AlignLeft,
     direction=Qt.LeftToRight,
-    init_font_size: int = 40,
+    max_font_size: int = 40,
     min_font_size: int = 10
 ) -> tuple[str, int]:
     """
-    Обертка текста в блоке с авто-переносом и запретом висячих букв.
-    Возвращает (wrapped_text, font_size)
-    """
-    from PySide6.QtGui import QFont, QFontMetrics, QTextDocument, QTextCursor, QTextBlockFormat, QTextOption
-    from PySide6.QtWidgets import QApplication
+    Авто-перенос текста с подбором шрифта по ширине блока.
 
-    text = text.strip()
+    Особенности:
+    - Параметр roi_height оставлен для совместимости, игнорируется.
+    - adjusted_width = roi_width * 1.25 используется для всех измерений.
+    - Перенос по пробелам не уменьшает шрифт.
+    - Перенос части слова учитывается: если нужен перенос части слова, шрифт уменьшается.
+    - Подбор размера идет сверху вниз (от max_font_size до min_font_size).
+    """
+
+    from PySide6.QtGui import QFont, QFontMetrics
+
     if not text:
         return "", min_font_size
 
-    adjusted_width = roi_width * 1.25  # можно увеличивать, если нужно больше места
+    text = str(text).strip()
+    if not text:
+        return "", min_font_size
 
-    # ----------------------------
-    # Подготовка шрифта
-    # ----------------------------
+    # --- немного увеличиваем ширину для удобства ---
+    adjusted_width = roi_width * 1.25
+
+    # --- подготовка шрифта ---
     def prepare_font(size: int) -> QFont:
-        f = QFont(font_input.strip() or QApplication.font().family(), size)
+        f = QFont(font_input.strip() or "Arial", size)
         f.setBold(bold)
         f.setItalic(italic)
         f.setUnderline(underline)
         return f
 
-    # ----------------------------
-    # Оценка размера текста
-    # ----------------------------
-    def eval_metrics(txt: str, font_sz: int) -> tuple[float, float]:
-        doc = QTextDocument()
-        doc.setDefaultFont(prepare_font(font_sz))
-        doc.setPlainText(txt)
-
-        opt = QTextOption()
-        opt.setTextDirection(direction)
-        opt.setAlignment(alignment)
-        doc.setDefaultTextOption(opt)
-
-        cursor = QTextCursor(doc)
-        cursor.select(QTextCursor.Document)
-        fmt = QTextBlockFormat()
-        fmt.setLineHeight(float(line_spacing) * 100.0, 4)
-        cursor.mergeBlockFormat(fmt)
-
-        size = doc.size()
-        w, h = size.width(), size.height()
-        if outline_width > 0:
-            w += 2 * outline_width
-            h += 2 * outline_width
-        return w, h
-
-    # ----------------------------
-    # Основной перенос слов с проверкой висячих букв
-    # ----------------------------
-    def wrap_text(src: str, font) -> str:
-        words = src.split()
-        if not words:
-            return ""
-
+    # --- функция wrap текста ---
+    def wrap_text(src: str, font: QFont) -> tuple[str, bool]:
+        """
+        Wrap текста по ширине блока (adjusted_width).
+        Возвращает:
+            wrapped_text: str
+            has_hyphen: bool — True, если пришлось переносить часть слова
+        """
         metrics = QFontMetrics(font)
         lines: list[str] = []
         current_line = ""
+        has_hyphen = False
 
-        for word in words:
+        for word in src.split():
             space = " " if current_line else ""
             test_line = current_line + space + word
 
-            # Слово помещается в текущую строку
+            # Слово помещается в текущую строку — просто добавляем
             if metrics.horizontalAdvance(test_line) <= adjusted_width:
                 current_line = test_line
                 continue
 
-            # ----------------------------
-            # Перенос слова
-            # ----------------------------
+            # Перенос на новую строку по пробелу
             if current_line:
                 lines.append(current_line)
                 current_line = ""
 
-            # Если слово помещается в новую строку
+            # Слово помещается само на новой строке
             if metrics.horizontalAdvance(word) <= adjusted_width:
                 current_line = word
                 continue
 
-            # ----------------------------
-            # Слишком длинное слово — перенос по слогам (pyphen)
-            # ----------------------------
+            # --- слово слишком длинное — перенос по части слова ---
+            has_hyphen = True
             remaining = word
             parts: list[str] = []
-
             max_char_width = max([metrics.horizontalAdvance(c) for c in remaining])
-            #print(max_char_width)
 
             while remaining:
-                # Ищем максимальный кусок, который помещается
                 for i in range(len(remaining), 0, -1):
                     candidate = remaining[:i]
-                    # Проверка: не оставляем "висячую букву"
+
+                    # Проверка на висячую букву
                     if i < len(remaining):
-                        # Если оставшийся кусок < ширины одной буквы, уменьшаем candidate
                         remaining_width = metrics.horizontalAdvance(remaining[i:])
-                        if remaining_width < 2*max_char_width:
+                        if remaining_width < 2 * max_char_width:
                             continue
+
                     test_candidate = candidate + ("-" if i < len(remaining) else "")
                     if metrics.horizontalAdvance(test_candidate) <= adjusted_width:
                         break
                 else:
-                    # если ничего не влезло, берем хотя бы 1 символ
                     i = 1
                     test_candidate = remaining[:1] + ("-" if len(remaining) > 1 else "")
 
@@ -211,33 +188,21 @@ def pyside_word_wrap(
         if current_line:
             lines.append(current_line)
 
-        return "\n".join(lines)
+        return "\n".join(lines), has_hyphen
 
-    # ----------------------------
-    # Начальный wrap
-    # ----------------------------
-    font_for_measure = prepare_font(init_font_size)
-    wrapped_text = wrap_text(text, font_for_measure)
+    # --- подбор размера сверху вниз ---
+    for size in range(max_font_size, min_font_size - 1, -1):
+        font_for_measure = prepare_font(size)
+        wrapped_text, has_hyphen = wrap_text(text, font_for_measure)
 
-    # ----------------------------
-    # Подгонка размера шрифта
-    # ----------------------------
-    best_size = min_font_size
-    lo, hi = min_font_size, init_font_size
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        w, h = eval_metrics(wrapped_text, mid)
-        if w <= adjusted_width and h <= roi_height:
-            best_size = mid
-            lo = mid + 1
-        else:
-            hi = mid - 1
+        # Если текст помещается без переноса части слова — используем этот размер
+        if not has_hyphen:
+            return wrapped_text, size
 
-    if best_size != init_font_size:
-        font_for_measure = prepare_font(best_size)
-        wrapped_text = wrap_text(text, font_for_measure)
-
-    return wrapped_text, best_size
+    # --- если ни один больше не подошел — минимальный размер ---
+    font_for_measure = prepare_font(min_font_size)
+    wrapped_text, _ = wrap_text(text, font_for_measure)
+    return wrapped_text, min_font_size
 
 
 
