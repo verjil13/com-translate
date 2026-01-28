@@ -5,17 +5,20 @@ import numpy as np
 from typing import TYPE_CHECKING
 
 from PySide6 import QtCore
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QTextCursor
 
 from app.ui.commands.textformat import TextFormatCommand
-from app.ui.commands.box import AddTextItemCommand
+from app.ui.commands.box import AddTextItemCommand, ResizeBlocksCommand
+from app.ui.commands.text_edit import TextEditCommand
 from app.ui.canvas.text_item import TextBlockItem
 from app.ui.canvas.text.text_item_properties import TextItemProperties
 
 from modules.utils.textblock import TextBlock
-from modules.rendering.render import TextRenderingSettings, manual_wrap
-from modules.utils.pipeline_utils import font_selected, get_language_code, \
-    get_layout_direction, is_close, get_smart_text_color
+from modules.rendering.render import TextRenderingSettings, manual_wrap, is_vertical_block
+from modules.utils.pipeline_config import font_selected
+from modules.utils.language_utils import get_language_code, get_layout_direction, is_no_space_lang
+from modules.utils.image_utils import get_smart_text_color
+from modules.utils.common_utils import is_close
 from modules.utils.translator_utils import format_translations
 
 if TYPE_CHECKING:
@@ -35,13 +38,23 @@ class TextController:
             self.main.outline_width_dropdown,
             self.main.outline_checkbox
         ]
+        self._text_change_timer = QtCore.QTimer(self.main)
+        self._text_change_timer.setSingleShot(True)
+        self._text_change_timer.setInterval(400)
+        self._text_change_timer.timeout.connect(self._commit_pending_text_command)
+        self._pending_text_command = None
+        self._last_item_text = {}
+        self._last_item_html = {}
+        self._suspend_text_command = False
 
     def connect_text_item_signals(self, text_item: TextBlockItem):
         text_item.item_selected.connect(self.on_text_item_selected)
         text_item.item_deselected.connect(self.on_text_item_deselected)
-        text_item.text_changed.connect(self.update_text_block_from_item)
+        text_item.text_changed.connect(lambda text, ti=text_item: self.update_text_block_from_item(ti, text))
         text_item.text_highlighted.connect(self.set_values_from_highlight)
         text_item.change_undo.connect(self.main.rect_item_ctrl.rect_change_undo)
+        self._last_item_text[text_item] = text_item.toPlainText()
+        self._last_item_html[text_item] = text_item.document().toHtml()
 
     def clear_text_edits(self):
         self.main.curr_tblock = None
@@ -56,7 +69,7 @@ class TextController:
 
         target_lang = self.main.lang_mapping.get(self.main.t_combo.currentText(), None)
         trg_lng_cd = get_language_code(target_lang)
-        if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+        if is_no_space_lang(trg_lng_cd):
             text = text.replace(' ', '')
 
         render_settings = self.render_settings()
@@ -77,6 +90,7 @@ class TextController:
         italic = render_settings.italic
         underline = render_settings.underline
         direction = render_settings.direction
+        vertical = is_vertical_block(blk, trg_lng_cd)
 
         properties = TextItemProperties(
             text=text,
@@ -93,6 +107,7 @@ class TextController:
             direction=direction,
             position=(blk.xyxy[0], blk.xyxy[1]),
             rotation=blk.angle,
+            vertical=vertical,
         )
         
         text_item = self.main.image_viewer.add_text_item(properties)
@@ -102,7 +117,10 @@ class TextController:
         self.main.push_command(command)
 
     def on_text_item_selected(self, text_item: TextBlockItem):
+        self._commit_pending_text_command()
         self.main.curr_tblock_item = text_item
+        self._last_item_text[text_item] = text_item.toPlainText()
+        self._last_item_html[text_item] = text_item.document().toHtml()
 
         x1, y1 = int(text_item.pos().x()), int(text_item.pos().y())
         rotation = text_item.rotation()
@@ -129,33 +147,95 @@ class TextController:
         self.set_values_for_blk_item(text_item)
 
     def on_text_item_deselected(self):
+        self._commit_pending_text_command()
         self.clear_text_edits()
 
     def update_text_block(self):
         if self.main.curr_tblock:
             self.main.curr_tblock.text = self.main.s_text_edit.toPlainText()
             self.main.curr_tblock.translation = self.main.t_text_edit.toPlainText()
+            self.main.mark_project_dirty()
 
     def update_text_block_from_edit(self):
         new_text = self.main.t_text_edit.toPlainText()
+        old_translation = None
+        old_item_text = None
         if self.main.curr_tblock:
+            old_translation = self.main.curr_tblock.translation
             self.main.curr_tblock.translation = new_text
 
         if self.main.curr_tblock_item and self.main.curr_tblock_item in self.main.image_viewer._scene.items():
+            old_item_text = self.main.curr_tblock_item.toPlainText()
             cursor_position = self.main.t_text_edit.textCursor().position()
-            self.main.curr_tblock_item.setPlainText(new_text)
+            self._apply_text_item_text_delta(self.main.curr_tblock_item, new_text)
 
             # Restore cursor position
             cursor = self.main.t_text_edit.textCursor()
             cursor.setPosition(cursor_position)
             self.main.t_text_edit.setTextCursor(cursor)
+        if (old_translation is None or old_translation == new_text) and (
+            old_item_text is None or old_item_text == new_text
+        ):
+            return
 
-    def update_text_block_from_item(self, new_text: str):
-        if self.main.curr_tblock and new_text:
-            self.main.curr_tblock.translation = new_text
+    def update_text_block_from_item(self, text_item: TextBlockItem, new_text: str):
+        if self._suspend_text_command:
+            return
+        blk = self._find_text_block_for_item(text_item)
+        if blk:
+            blk.translation = new_text
+
+        if self.main.curr_tblock_item == text_item:
+            self.main.curr_tblock = blk
             self.main.t_text_edit.blockSignals(True)
             self.main.t_text_edit.setPlainText(new_text)
             self.main.t_text_edit.blockSignals(False)
+
+        self._schedule_text_change_command(text_item, new_text, blk)
+
+    def _apply_text_item_text_delta(self, text_item: TextBlockItem, new_text: str):
+        old_text = text_item.toPlainText()
+        if old_text == new_text:
+            return
+
+        prefix = 0
+        max_prefix = min(len(old_text), len(new_text))
+        while prefix < max_prefix and old_text[prefix] == new_text[prefix]:
+            prefix += 1
+
+        suffix = 0
+        max_suffix = min(len(old_text) - prefix, len(new_text) - prefix)
+        while suffix < max_suffix and old_text[-(suffix + 1)] == new_text[-(suffix + 1)]:
+            suffix += 1
+
+        old_mid_end = len(old_text) - suffix
+        new_mid_end = len(new_text) - suffix
+        old_mid = old_text[prefix:old_mid_end]
+        new_mid = new_text[prefix:new_mid_end]
+
+        doc = text_item.document()
+        cursor = QTextCursor(doc)
+        insert_format = None
+
+        if old_text:
+            if prefix < len(old_text):
+                cursor.setPosition(prefix)
+                insert_format = cursor.charFormat()
+            elif prefix > 0:
+                cursor.setPosition(prefix - 1)
+                insert_format = cursor.charFormat()
+
+        cursor.beginEditBlock()
+        if old_mid:
+            cursor.setPosition(prefix)
+            cursor.setPosition(prefix + len(old_mid), QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+        if new_mid:
+            cursor.setPosition(prefix)
+            if insert_format is not None:
+                cursor.setCharFormat(insert_format)
+            cursor.insertText(new_mid)
+        cursor.endEditBlock()
 
     def save_src_trg(self):
         source_lang = self.main.s_combo.currentText()
@@ -172,23 +252,131 @@ class TextController:
         t_text_option.setTextDirection(t_direction)
         self.main.t_text_edit.document().setDefaultTextOption(t_text_option)
 
+        if self.main.curr_img_idx >= 0:
+            self.main.mark_project_dirty()
+
     def set_src_trg_all(self):
         source_lang = self.main.s_combo.currentText()
         target_lang = self.main.t_combo.currentText()
         for image_path in self.main.image_files:
             self.main.image_states[image_path]['source_lang'] = source_lang
             self.main.image_states[image_path]['target_lang'] = target_lang
+        if self.main.image_files:
+            self.main.mark_project_dirty()
 
     def change_all_blocks_size(self, diff: int):
         if len(self.main.blk_list) == 0:
             return
-        updated_blk_list = []
-        for blk in self.main.blk_list:
-            blk_rect = tuple(blk.xyxy)
-            blk.xyxy[:] = [blk_rect[0] - diff, blk_rect[1] - diff, blk_rect[2] + diff, blk_rect[3] + diff]
-            updated_blk_list.append(blk)
-        self.main.blk_list = updated_blk_list
-        self.main.pipeline.load_box_coords(self.main.blk_list)
+        command = ResizeBlocksCommand(self.main, self.main.blk_list, diff)
+        stack = self.main.undo_group.activeStack()
+        if stack:
+            stack.push(command)
+        else:
+            command.redo()
+            self.main.mark_project_dirty()
+
+    def _find_text_block_for_item(self, text_item: TextBlockItem) -> TextBlock | None:
+        if not text_item:
+            return None
+
+        x1, y1 = int(text_item.pos().x()), int(text_item.pos().y())
+        rotation = text_item.rotation()
+
+        return next(
+            (
+                blk for blk in self.main.blk_list
+                if is_close(blk.xyxy[0], x1, 5)
+                and is_close(blk.xyxy[1], y1, 5)
+                and is_close(blk.angle, rotation, 1)
+            ),
+            None
+        )
+
+    def _schedule_text_change_command(self, text_item: TextBlockItem, new_text: str, blk: TextBlock | None):
+        if self._suspend_text_command:
+            return
+
+        pending = self._pending_text_command
+        if pending and pending['item'] is not text_item:
+            self._commit_pending_text_command()
+            pending = None
+
+        new_html = text_item.document().toHtml()
+        if pending is None:
+            old_text = self._last_item_text.get(text_item, new_text)
+            old_html = self._last_item_html.get(text_item, new_html)
+            if old_text == new_text:
+                self._last_item_text[text_item] = new_text
+                self._last_item_html[text_item] = new_html
+                return
+            pending = {
+                'item': text_item,
+                'old_text': old_text,
+                'new_text': new_text,
+                'old_html': old_html,
+                'new_html': new_html,
+                'blk': blk,
+            }
+            self._pending_text_command = pending
+        else:
+            pending['new_text'] = new_text
+            pending['new_html'] = new_html
+            pending['blk'] = blk
+
+        self._last_item_text[text_item] = new_text
+        self._last_item_html[text_item] = new_html
+        self._text_change_timer.start()
+
+    def _commit_pending_text_command(self):
+        if not self._pending_text_command:
+            return
+        self._text_change_timer.stop()
+        pending = self._pending_text_command
+        self._pending_text_command = None
+
+        if pending['old_text'] == pending['new_text']:
+            return
+
+        command = TextEditCommand(
+            self.main,
+            pending['item'],
+            pending['old_text'],
+            pending['new_text'],
+            old_html=pending.get('old_html'),
+            new_html=pending.get('new_html'),
+            blk=pending['blk']
+        )
+        stack = self.main.undo_group.activeStack()
+        if stack:
+            stack.push(command)
+        else:
+            command.redo()
+            self.main.mark_project_dirty()
+
+    def apply_text_from_command(self, text_item: TextBlockItem, text: str,
+                                html: str | None = None, blk: TextBlock | None = None):
+        self._suspend_text_command = True
+        try:
+            if text_item and text_item in self.main.image_viewer._scene.items():
+                if html is not None:
+                    if text_item.document().toHtml() != html:
+                        text_item.document().setHtml(html)
+                elif text_item.toPlainText() != text:
+                    text_item.set_plain_text(text)
+            if blk is None:
+                blk = self._find_text_block_for_item(text_item)
+            if blk:
+                blk.translation = text
+            if self.main.curr_tblock_item == text_item:
+                self.main.curr_tblock = blk
+                self.main.t_text_edit.blockSignals(True)
+                self.main.t_text_edit.setPlainText(text)
+                self.main.t_text_edit.blockSignals(False)
+        finally:
+            self._suspend_text_command = False
+        if text_item:
+            self._last_item_text[text_item] = text
+            self._last_item_html[text_item] = text_item.document().toHtml()
 
     # Formatting actions
     def on_font_dropdown_change(self, font_family: str):
@@ -521,10 +709,24 @@ class TextController:
             direction = render_settings.direction
 
             self.main.undo_group.activeStack().beginMacro('text_items_rendered')
-            self.main.run_threaded(manual_wrap, self.on_render_complete, self.main.default_error_handler,
-                              None, self.main, new_blocks, font_family, line_spacing, outline_width,
-                              bold, italic, underline, alignment, direction, max_font_size,
-                              min_font_size)
+            self.main.run_threaded(
+                manual_wrap, 
+                self.on_render_complete, 
+                self.main.default_error_handler,
+                None, 
+                self.main, 
+                new_blocks, 
+                font_family, 
+                line_spacing, 
+                outline_width,
+                bold, 
+                italic, 
+                underline, 
+                alignment, 
+                direction, 
+                max_font_size,
+                min_font_size
+            )
 
     def on_render_complete(self, rendered_image: np.ndarray):
         # self.main.set_image(rendered_image) 

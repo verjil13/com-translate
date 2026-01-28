@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtWidgets, QtGui
 
 from app.ui.dayu_widgets.clickable_card import ClickMeta
 from app.ui.dayu_widgets.message import MMessage
-from app.ui.commands.image import SetImageCommand
+from app.ui.commands.image import SetImageCommand, ToggleSkipImagesCommand
 from app.ui.commands.inpaint import PatchInsertCommand
 from app.ui.commands.inpaint import PatchCommandBase
 from app.ui.commands.box import AddTextItemCommand
@@ -62,6 +62,7 @@ class ImageStateController:
 
     def clear_state(self):
         # Clear existing image data
+        self.main.setWindowTitle("Project1.ctpr[*]")
         self.main.image_files = []
         self.main.image_states.clear()
         self.main.image_data.clear()
@@ -89,6 +90,7 @@ class ImageStateController:
 
         # Reset current_image_index
         self.main.curr_img_idx = -1
+        self.main.set_project_clean()
 
     def thread_load_images(self, paths: List[str]):
         if paths and paths[0].lower().endswith('.ctpr'):
@@ -100,6 +102,8 @@ class ImageStateController:
     def thread_insert(self, paths: List[str]):
         if self.main.image_files:
             def on_files_prepared(prepared_files):
+                if not prepared_files:
+                    return
                 # Save current state and determine insert position
                 self.save_current_image_state()
                 
@@ -129,6 +133,7 @@ class ImageStateController:
                     
                     # Create undo stack for new file
                     stack = QtGui.QUndoStack(self.main)
+                    stack.cleanChanged.connect(self.main._update_window_modified)
                     self.main.undo_stacks[file_path] = stack
                     self.main.undo_group.addStack(stack)
                 
@@ -166,6 +171,7 @@ class ImageStateController:
                     new_index = self.main.image_files.index(path)
                     im = self.load_image(path)
                     self.display_image_from_loaded(im, new_index, False)
+                self.main.mark_project_dirty()
 
             self.main.run_threaded(
                 lambda: self.main.file_handler.prepare_files(paths, True),
@@ -185,6 +191,7 @@ class ImageStateController:
         for file in self.main.image_files:
             self.save_image_state(file)
             stack = QtGui.QUndoStack(self.main)
+            stack.cleanChanged.connect(self.main._update_window_modified)
             self.main.undo_stacks[file] = stack
             self.main.undo_group.addStack(stack)
 
@@ -199,6 +206,8 @@ class ImageStateController:
 
         self.main.image_viewer.resetTransform()
         self.main.image_viewer.fitInView()
+        if self.main.image_files:
+            self.main.mark_project_dirty()
 
     def update_image_cards(self):
         # Clear existing items
@@ -327,6 +336,7 @@ class ImageStateController:
         """Handles the deletion of images based on the provided file names."""
 
         self.save_current_image_state()
+        removed_any = False
         
         # Delete the files first.
         for file_name in file_names:
@@ -336,6 +346,7 @@ class ImageStateController:
             if file_path:
                 # Remove from the image_files list
                 self.main.image_files.remove(file_path)
+                removed_any = True
                 
                 # Remove associated data
                 self.main.image_data.pop(file_path, None)
@@ -421,6 +432,8 @@ class ImageStateController:
                 self.main.curr_img_idx = -1
                 self.main.central_stack.setCurrentWidget(self.main.drag_browser)
                 self.update_image_cards()
+        if removed_any:
+            self.main.mark_project_dirty()
 
 
     def handle_toggle_skip_images(self, file_names: list[str], skip_status: bool):
@@ -431,26 +444,30 @@ class ImageStateController:
             file_names: List of file names to update
             skip_status: If True, mark as skipped; if False, mark as not skipped
         """
+        file_paths = []
         for name in file_names:
-            # find full path
             path = next((p for p in self.main.image_files if os.path.basename(p) == name), None)
-            if not path:
-                continue
+            if path:
+                file_paths.append(path)
 
-            # update skip status in state dictionary
-            self.main.image_states.get(path, {})['skip'] = skip_status
+        if not file_paths:
+            return
 
-            # update item appearance
-            idx = self.main.image_files.index(path)
-            item = self.main.page_list.item(idx)
-            fnt = item.font()
-            fnt.setStrikeOut(skip_status)
-            item.setFont(fnt)
+        changed = False
+        for path in file_paths:
+            if self.main.image_states.get(path, {}).get('skip', False) != skip_status:
+                changed = True
+                break
+        if not changed:
+            return
 
-            # update card 
-            card = self.main.page_list.itemWidget(item)
-            if card:
-                card.set_skipped(skip_status)
+        command = ToggleSkipImagesCommand(self.main, file_paths, skip_status)
+        stack = self.main.undo_group.activeStack()
+        if stack:
+            stack.push(command)
+        else:
+            command.redo()
+            self.main.mark_project_dirty()
 
     def display_image_from_loaded(self, rgb_image, index: int, switch_page: bool = True):
         file_path = self.main.image_files[index]

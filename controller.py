@@ -5,9 +5,9 @@ import tempfile
 import re
 from typing import Callable, Tuple
 
-from PySide6 import QtCore
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import QCoreApplication, QThreadPool
-from PySide6.QtGui import QUndoGroup, QUndoStack
+from PySide6.QtGui import QUndoGroup, QUndoStack, QIcon
 
 from app.ui.dayu_widgets.qt import MPixmap
 from app.ui.main_window import ComicTranslateUI
@@ -20,13 +20,14 @@ from app.ui.commands.box import DeleteBoxesCommand
 
 from modules.utils.textblock import TextBlock
 from modules.utils.file_handler import FileHandler
-from modules.utils.pipeline_utils import validate_settings, validate_ocr, \
+from modules.utils.pipeline_config import validate_settings, validate_ocr, \
                                          validate_translator
 from modules.utils.download import mandatory_models, set_download_callback, ensure_mandatory_models
 from modules.detection.utils.content import get_inpaint_bboxes
 from modules.utils.translator_utils import is_there_text
-from modules.rendering.render import pyside_word_wrap
-from modules.utils.pipeline_utils import get_language_code, is_close
+from modules.rendering.render import pyside_word_wrap, is_vertical_block
+from modules.utils.language_utils import get_language_code, is_no_space_lang
+from modules.utils.common_utils import is_close
 from modules.utils.translator_utils import format_translations
 from pipeline.main_pipeline import ComicTranslatePipeline
 from pipeline.webtoon_utils import get_visible_text_items, get_first_visible_block
@@ -36,6 +37,7 @@ from app.controllers.rect_item import RectItemController
 from app.controllers.projects import ProjectController
 from app.controllers.text import TextController
 from app.controllers.webtoons import WebtoonController
+from modules.utils.exceptions import InsufficientCreditsException
 from collections import deque
 
 
@@ -52,6 +54,12 @@ class ComicTranslate(ComicTranslateUI):
 
     def __init__(self, parent=None):
         super(ComicTranslate, self).__init__(parent)
+        self.setWindowTitle("Project1.ctpr[*]")
+
+        # Explicitly set window icon to ensure it persists after splash screen
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(current_file_dir, 'resources', 'icons', 'icon.ico')
+        self.setWindowIcon(QIcon(icon_path))
 
         self.blk_list: list[TextBlock] = []   
         self.curr_tblock: TextBlock = None
@@ -77,6 +85,8 @@ class ComicTranslate(ComicTranslateUI):
         self.undo_stacks: dict[str, QUndoStack] = {}
         self.project_file = None
         self.temp_dir = tempfile.mkdtemp()
+        self._manual_dirty = False
+        self._skip_close_prompt = False
 
         self.pipeline = ComicTranslatePipeline(self)
         self.file_handler = FileHandler()
@@ -101,6 +111,9 @@ class ComicTranslate(ComicTranslateUI):
 
         self.project_ctrl.load_main_page_settings()
         self.settings_page.load_settings()
+        
+        # Check for updates in background
+        self.settings_page.check_for_updates(is_background=True)
 
         self.operation_queue = deque()
         self.is_processing_queue = False
@@ -223,6 +236,50 @@ class ComicTranslate(ComicTranslateUI):
     def apply_inpaint_patches(self, patches): return self.image_ctrl.apply_inpaint_patches(patches)
     def render_settings(self): return self.text_ctrl.render_settings()
     def load_image(self, file_path: str) -> np.ndarray: return self.image_ctrl.load_image(file_path)
+
+    def _any_undo_dirty(self) -> bool:
+        for stack in self.undo_stacks.values():
+            try:
+                if stack and not stack.isClean():
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def has_unsaved_changes(self) -> bool:
+        return bool(self._manual_dirty) or self._any_undo_dirty()
+
+    def mark_project_dirty(self):
+        self._manual_dirty = True
+        self._update_window_modified()
+
+    def set_project_clean(self):
+        self._manual_dirty = False
+        for stack in self.undo_stacks.values():
+            try:
+                stack.setClean()
+            except Exception:
+                continue
+        self._update_window_modified()
+
+    def _update_window_modified(self):
+        try:
+            self.setWindowModified(self.has_unsaved_changes())
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        """Handle execution of cleanup operations on close"""
+        self.settings_page.shutdown()
+        if self._skip_close_prompt:
+             event.accept()
+        else:
+            # Add any other close prompt logic here if needed
+            event.accept()
+
+    def _finish_close_after_save(self):
+        self._skip_close_prompt = True
+        self.close()
 
     def push_command(self, command):
         if self.undo_group.activeStack():
@@ -419,20 +476,23 @@ class ComicTranslate(ComicTranslateUI):
 
     def default_error_handler(self, error_tuple: Tuple):
         exctype, value, traceback_str = error_tuple
-        error_msg = f"An error occurred:\n{exctype.__name__}: {value}"
-        error_msg_trcbk = f"An error occurred:\n{exctype.__name__}: {value}\n\nTraceback:\n{traceback_str}"
-        print(error_msg_trcbk)
-        Messages.show_error_with_copy(self, self.tr("Error"), error_msg, error_msg_trcbk)
+        
+        # Handle specific exceptions
+        if exctype is InsufficientCreditsException:
+            Messages.show_insufficient_credits_error(self, details=str(value))
+        else:
+            error_msg = f"An error occurred:\n{exctype.__name__}: {value}"
+            error_msg_trcbk = f"An error occurred:\n{exctype.__name__}: {value}\n\nTraceback:\n{traceback_str}"
+            print(error_msg_trcbk)
+            Messages.show_error_with_copy(self, self.tr("Error"), error_msg, error_msg_trcbk)
         self.loading.setVisible(False)
         self.enable_hbutton_group()
 
     def start_batch_process(self):
         #self.auto_delete_trash_blocks() #
         for image_path in self.image_files:
-            source_lang = self.image_states[image_path]['source_lang']
             target_lang = self.image_states[image_path]['target_lang']
-
-            if not validate_settings(self, source_lang, target_lang):
+            if not validate_settings(self, target_lang):
                 return
             
         self.translate_button.setEnabled(False)
@@ -455,9 +515,8 @@ class ComicTranslate(ComicTranslateUI):
 
         # validate each
         for path in selected_paths:
-            src = self.image_states[path]['source_lang']
             tgt = self.image_states[path]['target_lang']
-            if not validate_settings(self, src, tgt):
+            if not validate_settings(self, tgt):
                 return
             
         self.selected_batch = selected_paths
@@ -527,8 +586,7 @@ class ComicTranslate(ComicTranslateUI):
         self.on_manual_finished()
 
     def ocr(self, single_block=False):
-        source_lang = self.s_combo.currentText()
-        if not validate_ocr(self, source_lang):
+        if not validate_ocr(self):
             return
         self.loading.setVisible(True)
         self.disable_hbutton_group()
@@ -550,6 +608,7 @@ class ComicTranslate(ComicTranslateUI):
             )
 
     def translate_image(self, single_block=False):
+        #HEAD
         #self.auto_delete_trash_blocks() #автоудаление блоков
         
         source_lang = self.s_combo.currentText()
@@ -557,6 +616,11 @@ class ComicTranslate(ComicTranslateUI):
         if not is_there_text(self.blk_list) or not validate_translator(self, source_lang, target_lang):
             return       
             
+        '''
+        target_lang = self.t_combo.currentText()
+        if not is_there_text(self.blk_list) or not validate_translator(self, target_lang):
+            return
+        '''
         self.loading.setVisible(True)
         self.disable_hbutton_group()
         
@@ -585,7 +649,7 @@ class ComicTranslate(ComicTranslateUI):
 
     def update_translated_text_items(self, single_blk: bool):
         def set_new_text(text_item, wrapped, font_size):
-            if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+            if is_no_space_lang(trg_lng_cd):
                 wrapped = wrapped.replace(' ', '')
             text_item.set_plain_text(wrapped)
             text_item.set_font_size(font_size)
@@ -620,6 +684,8 @@ class ComicTranslate(ComicTranslateUI):
                 )
                 if not (blk and blk.translation):
                     continue
+                # Determine if this block should use vertical rendering
+                vertical = is_vertical_block(blk, trg_lng_cd)
 
                 wrap_args = (
                     blk.translation,
@@ -635,6 +701,7 @@ class ComicTranslate(ComicTranslateUI):
                     text_item.direction,
                     rs.max_font_size,
                     rs.min_font_size,
+                    vertical,
                 )
 
                 # enqueue the word-wrap
@@ -817,6 +884,37 @@ class ComicTranslate(ComicTranslateUI):
             super().keyPressEvent(event)
 
     def closeEvent(self, event):
+        try:
+            self.text_ctrl._commit_pending_text_command()
+        except Exception:
+            pass
+        if not getattr(self, "_skip_close_prompt", False):
+            if self.has_unsaved_changes():
+                msg_box = QtWidgets.QMessageBox(self)
+                msg_box.setIcon(QtWidgets.QMessageBox.Question)
+                msg_box.setWindowTitle(self.tr("Unsaved Changes"))
+                msg_box.setText(self.tr("Save changes to this file?"))
+                save_btn = msg_box.addButton(self.tr("Save"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+                msg_box.addButton(self.tr("Don't Save"), QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+                cancel_btn = msg_box.addButton(self.tr("Cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole)
+                msg_box.setDefaultButton(save_btn)
+                msg_box.exec()
+                clicked = msg_box.clickedButton()
+
+                if clicked == save_btn:
+                    self.project_ctrl.thread_save_project(
+                        post_save_callback=self._finish_close_after_save
+                    )
+                    event.ignore()
+                    return
+                if clicked == cancel_btn or clicked is None:
+                    event.ignore()
+                    return
+        else:
+            self._skip_close_prompt = False
+
+        self.shutdown()
+
         # Save all settings when the application is closed
         self.settings_page.save_settings()
         self.project_ctrl.save_main_page_settings()
@@ -837,3 +935,23 @@ class ComicTranslate(ComicTranslateUI):
 
         super().closeEvent(event)
 
+    def shutdown(self):
+        if getattr(self, "_is_shutting_down", False):
+            return
+        self._is_shutting_down = True
+
+        try:
+            self.cancel_current_task()
+        except Exception:
+            pass
+
+        try:
+            self.threadpool.clear()
+            self.threadpool.waitForDone(2000)
+        except Exception:
+            pass
+
+        try:
+            self.settings_page.shutdown()
+        except Exception:
+            pass

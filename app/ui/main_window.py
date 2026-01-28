@@ -52,7 +52,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
 
     def __init__(self, parent=None):
         super(ComicTranslateUI, self).__init__(parent)
-        self.setWindowTitle("Comic Translate")
+        self.setWindowTitle("Comic Translate[*]")
         
         screen = QtWidgets.QApplication.primaryScreen()
         geo = screen.geometry()
@@ -256,21 +256,27 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         return nav_rail_layout
 
     def _confirm_start_new_project(self) -> bool:
-        """Ask for confirmation if there's unsaved work (no project file but images are loaded)."""
+        """Ask for confirmation if there's unsaved work."""
         try:
-            has_unsaved = (getattr(self, 'project_file', None) is None) and bool(getattr(self, 'image_files', []))
+            if hasattr(self, 'text_ctrl'):
+                self.text_ctrl._commit_pending_text_command()
+            if hasattr(self, "has_unsaved_changes"):
+                has_unsaved = bool(self.has_unsaved_changes())
+            else:
+                has_unsaved = (getattr(self, 'project_file', None) is None) and bool(getattr(self, 'image_files', []))
         except Exception:
             has_unsaved = False
 
         if has_unsaved:
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                self.tr("Start New Project"),
-                self.tr("Your current project is not saved, are you sure you want to start a new project?"),
-                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-                QtWidgets.QMessageBox.StandardButton.No
-            )
-            return reply == QtWidgets.QMessageBox.StandardButton.Yes
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setIcon(QtWidgets.QMessageBox.Question)
+            msg_box.setWindowTitle(self.tr("Start New Project"))
+            msg_box.setText(self.tr("Your current project has unsaved changes. Start a new project?"))
+            yes_btn = msg_box.addButton(self.tr("Yes"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+            no_btn = msg_box.addButton(self.tr("No"), QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(no_btn)
+            msg_box.exec()
+            return msg_box.clickedButton() == yes_btn
         return True
 
     def show_tool_menu(self):

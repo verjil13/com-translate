@@ -18,6 +18,8 @@ from PySide6.QtWidgets import QApplication
 from modules.utils.textblock import TextBlock
 from modules.utils.textblock import adjust_blks_size
 from modules.detection.utils.geometry import shrink_bbox
+from app.ui.canvas.text.vertical_layout import VerticalTextDocumentLayout
+from modules.utils.language_utils import get_language_code
 
 from dataclasses import dataclass
 
@@ -74,6 +76,34 @@ def pil_to_array(pil_image: Image):
     return np.array(pil_image)
 
 
+def is_vertical_language_code(lang_code: str | None) -> bool:
+    """Return True if the language code should use vertical layout.
+
+    Currently treats Japanese and simplified/traditional Chinese as
+    vertical-capable languages.
+    """
+    if not lang_code:
+        return False
+    code = lang_code.lower()
+    return code in {"zh-cn", "zh-tw", "ja"}
+
+def is_vertical_block(blk, lang_code: str | None) -> bool:
+    """Return True if this block should be rendered vertically.
+
+    A block is considered vertical when its direction flag is "vertical"
+    and the target language code is one of the vertical-capable ones.
+    """
+    return getattr(blk, "direction", "") == "vertical" and is_vertical_language_code(lang_code)
+
+def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str, 
+                  roi_width, roi_height, align: str, spacing, init_font_size: int, min_font_size: int = 10):
+    """Break long text to multiple lines, and reduce point size
+    until all text fits within a bounding box."""
+    mutable_message = text
+    font_size = init_font_size
+    font = ImageFont.truetype(font_pth, font_size)
+
+
 
 # ============================================================
 # PYSIDE WORD WRAP (исправленный)
@@ -92,7 +122,8 @@ def pyside_word_wrap(
     alignment=Qt.AlignLeft,
     direction=Qt.LeftToRight,
     max_font_size: int = 40,
-    min_font_size: int = 10
+    min_font_size: int = 10,
+    vertical: bool = False
 ) -> tuple[str, int]:
     """
     Авто-перенос текста с подбором шрифта по ширине блока.
@@ -221,6 +252,7 @@ def get_best_render_area(
     - ЦЕНТРИРУЕТ текст по вертикали и горизонтали внутри пузыря
     """
 
+
     if inpainted_img is None or inpainted_img.size == 0:
         return blk_list
 
@@ -277,7 +309,6 @@ def get_best_render_area(
     return blk_list
 
 
-
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
 # ============================================================
@@ -301,6 +332,8 @@ def manual_wrap(
         translation = blk.translation
         if not translation:
             continue
+            
+        vertical = is_vertical_block(blk, trg_lng_cd)    
 
         # 1️⃣ Подбираем текст и размер шрифта
         wrapped_text, font_size = pyside_word_wrap(
@@ -316,7 +349,8 @@ def manual_wrap(
             alignment,
             direction,
             init_font_size,
-            min_font_size
+            min_font_size,
+            vertical
         )
 
         # 2️⃣ Центрируем bbox блока под размер текста
@@ -329,7 +363,6 @@ def manual_wrap(
         text_lines = wrapped_text.split("\n")
         text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
         text_h = metrics.height() * len(text_lines)  # высота всего текста
-
         # центрирование внутри исходного блока
         new_x1 = x1 + (width - text_w) // 2
         new_y1 = y1 + (height - text_h) // 2
@@ -339,4 +372,5 @@ def manual_wrap(
 
         # 3️⃣ Рендерим текст уже в центрированном блоке
         main_page.blk_rendered.emit(wrapped_text, font_size, blk)
+
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import shutil
@@ -7,6 +9,7 @@ import traceback
 import imkit as imk
 import time
 import re
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import List
 from PySide6.QtGui import QColor
@@ -14,16 +17,24 @@ from PySide6.QtGui import QColor
 from modules.detection.processor import TextBlockDetector
 from modules.translation.processor import Translator
 from modules.utils.textblock import sort_blk_list
-from modules.utils.pipeline_utils import inpaint_map, get_config, generate_mask, \
-    get_language_code, is_directory_empty, get_smart_text_color
+from modules.utils.pipeline_config import inpaint_map, get_config
+from modules.utils.image_utils import generate_mask, get_smart_text_color
+from modules.utils.language_utils import get_language_code, is_no_space_lang
+from modules.utils.common_utils import is_directory_empty
 from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations
 from modules.utils.archives import make
-from modules.rendering.render import get_best_render_area, pyside_word_wrap
+from modules.rendering.render import get_best_render_area, pyside_word_wrap, is_vertical_block
 from modules.utils.device import resolve_device
 from app.ui.canvas.text_item import OutlineInfo, OutlineType
 from app.ui.canvas.text.text_item_properties import TextItemProperties
 from app.ui.canvas.save_renderer import ImageSaveRenderer
+from .cache_manager import CacheManager
+from .block_detection import BlockDetectionHandler
+from .inpainting import InpaintingHandler
+from .ocr_handler import OCRHandler
 
+if TYPE_CHECKING:
+    from controller import ComicTranslate
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +48,11 @@ class BatchProcessor:
     
     def __init__(
             self, 
-            main_page, 
-            cache_manager, 
-            block_detection_handler, 
-            inpainting_handler, 
-            ocr_handler
+            main_page: ComicTranslate, 
+            cache_manager: CacheManager, 
+            block_detection_handler: BlockDetectionHandler, 
+            inpainting_handler: InpaintingHandler, 
+            ocr_handler: OCRHandler 
         ):
         
         self.main_page = main_page
@@ -374,17 +385,33 @@ class BatchProcessor:
                 translation = blk.translation
                 if not translation or len(translation) == 0: #1
                     continue
+                
+                # Determine if this block should use vertical rendering
+                vertical = is_vertical_block(blk, trg_lng_cd)
 
-                translation, font_size = pyside_word_wrap(translation, font, width, height,
-                                                        line_spacing, outline_width, bold, italic, underline,
-                                                        alignment, direction, max_font_size, min_font_size)
+                translation, font_size = pyside_word_wrap(
+                    translation, 
+                    font, 
+                    width, 
+                    height,
+                    line_spacing, 
+                    outline_width, 
+                    bold, 
+                    italic, 
+                    underline,
+                    alignment, 
+                    direction, 
+                    max_font_size, 
+                    min_font_size,
+                    vertical
+                )
                 
                 # Display text if on current page  
                 if image_path == file_on_display:
                     self.main_page.blk_rendered.emit(translation, font_size, blk)
 
                 # Language-specific formatting for state storage
-                if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+                if is_no_space_lang(trg_lng_cd):
                     translation = translation.replace(' ', '')
 
                 # Smart Color Override
@@ -409,6 +436,7 @@ class BatchProcessor:
                     transform_origin=blk.tr_origin_point,
                     width=width,
                     direction=direction,
+                    vertical=vertical,
                     selection_outlines=[
                         OutlineInfo(0, len(translation), 
                         outline_color, 

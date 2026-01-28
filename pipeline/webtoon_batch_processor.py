@@ -1,9 +1,7 @@
 import os
-import json
 import shutil
 import logging
 import requests
-import traceback
 import numpy as np
 import imkit as imk
 from datetime import datetime
@@ -14,9 +12,12 @@ from PySide6.QtGui import QColor
 from modules.detection.processor import TextBlockDetector
 from modules.translation.processor import Translator
 from modules.utils.textblock import sort_blk_list, TextBlock
-from modules.utils.pipeline_utils import inpaint_map, get_config, generate_mask, \
-    get_language_code, is_directory_empty, get_smart_text_color
+from modules.utils.pipeline_config import inpaint_map, get_config
+from modules.utils.image_utils import generate_mask, get_smart_text_color
+from modules.utils.language_utils import get_language_code, is_no_space_lang
+from modules.utils.common_utils import is_directory_empty
 from modules.utils.translator_utils import format_translations
+from modules.rendering.render import is_vertical_block
 from modules.utils.archives import make
 from modules.rendering.render import get_best_render_area, pyside_word_wrap
 from app.ui.canvas.text_item import OutlineInfo, OutlineType
@@ -680,7 +681,7 @@ class WebtoonBatchProcessor:
         format_translations(final_blocks, trg_lng_cd, upper_case=render_settings.upper_case)
 
         # Language-specific formatting 
-        if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+        if is_no_space_lang(trg_lng_cd):
             for blk in final_blocks:
                 if blk.translation:
                     blk.translation = blk.translation.replace(' ', '')
@@ -746,11 +747,27 @@ class WebtoonBatchProcessor:
             if not translation or len(translation) < 1:
                 continue
 
-            translation, font_size = pyside_word_wrap(translation, font, width, height,
-                                                      line_spacing, outline_width, bold, italic, underline,
-                                                      alignment, direction, max_font_size, min_font_size)
+            # Determine if this block should use vertical rendering
+            vertical = is_vertical_block(blk_virtual, trg_lng_cd)
+
+            translation, font_size = pyside_word_wrap(
+                translation, 
+                font, 
+                width, 
+                height,
+                line_spacing, 
+                outline_width, 
+                bold, 
+                italic, 
+                underline,
+                alignment, 
+                direction, 
+                max_font_size, 
+                min_font_size,
+                vertical
+            )
             
-            if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+            if is_no_space_lang(trg_lng_cd):
                 translation = translation.replace(' ', '')
 
             # Smart Color Override
@@ -796,6 +813,7 @@ class WebtoonBatchProcessor:
                 transform_origin=blk_virtual.tr_origin_point if blk_virtual.tr_origin_point else (0, 0),
                 width=width,
                 direction=direction,
+                vertical=vertical,
                 selection_outlines=[
                     OutlineInfo(
                         0, 

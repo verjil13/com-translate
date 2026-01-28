@@ -11,3 +11,6 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 Windows install CUDA_12.8, cudnn_9.8. 
 
+
+conda activate H:\comic-translate\env
+

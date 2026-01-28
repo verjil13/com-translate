@@ -35,7 +35,7 @@ class Messages:
         MMessage.error(
             text=QCoreApplication.translate(
                 "Messages",
-                "Please provide API credentials in Settings > Credentials to continue."
+                "Please sign in or sign up via Settings > Account to continue."
             ),
             parent=parent,
             duration=None,
@@ -48,6 +48,54 @@ class Messages:
             text=QCoreApplication.translate(
                 "Messages",
                 "The translator does not support the selected target language. Please choose a different language or tool."
+            ),
+            parent=parent,
+            duration=None,
+            closable=True
+        )
+
+    @staticmethod
+    def show_missing_tool_error(parent, tool_name):
+        MMessage.error(
+            text=QCoreApplication.translate(
+                "Messages",
+                "No {} selected. Please select a {} in Settings > Tools."
+            ).format(tool_name, tool_name),
+            parent=parent,
+            duration=None,
+            closable=True
+        )
+
+    @staticmethod
+    def show_insufficient_credits_error(parent, details: str = None):
+        """
+        Show an error message when the user has insufficient credits.
+        
+        Args:
+            parent: parent widget
+            details: optional detailed message from backend
+        """
+        MMessage.error(
+            text=QCoreApplication.translate(
+            "Messages", 
+            "Insufficient credits to perform this action.\nGo to Settings > Account to buy more credits."
+            ),
+            parent=parent,
+            duration=None,
+            closable=True
+        )
+
+    @staticmethod
+    def show_custom_not_configured_error(parent):
+        """
+        Show an error message when Custom is selected without proper configuration.
+        Guides users to use the Credits system instead.
+        """
+        MMessage.error(
+            text=QCoreApplication.translate(
+                "Messages",
+                "Custom requires advanced API configuration. Most users should use the Credits system instead.\n"
+                "Please sign in via Settings > Account to use credits, or configure Custom API settings in Settings > Advanced."
             ),
             parent=parent,
             duration=None,
@@ -80,10 +128,10 @@ class Messages:
         except Exception:
             pass
 
-        copy_btn = msg.addButton(QCoreApplication.translate("Messages", "Copy"), QtWidgets.QMessageBox.ActionRole)
-        # Add standard buttons so the window has a RejectRole (Close) and AcceptRole (Ok)
-        msg.setStandardButtons(QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Close)
-        msg.setDefaultButton(QtWidgets.QMessageBox.Ok)
+        copy_btn = msg.addButton(QCoreApplication.translate("Messages", "Copy"), QtWidgets.QMessageBox.ButtonRole.ActionRole)
+        ok_btn = msg.addButton(QCoreApplication.translate("Messages", "OK"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton(QCoreApplication.translate("Messages", "Close"), QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        msg.setDefaultButton(ok_btn)
         msg.exec()
 
         if msg.clickedButton() == copy_btn:
