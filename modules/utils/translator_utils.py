@@ -89,6 +89,7 @@ def normalize_repeating_chars_advanced(text: str) -> str:
     censored_dict = {
         #"ま●こ": "まんこ",
         "ま●こ": "pussy",
+        "ま○こ": "pussy",
         #"ち●こ": "ちんこ",
         "ち●こ": "dick",  
         # сюда можно добавлять новые слова
@@ -138,6 +139,9 @@ def post_process_translation(text: str) -> str:
 
     # Убираем пробелы слева после удаления
     text = text.lstrip()
+    
+     # --- 3) Замена сердечек ♥ на ♡ ---
+    text = text.replace("♥", "♡")
 
     return text
 '''
