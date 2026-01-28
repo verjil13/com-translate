@@ -12,6 +12,7 @@ __pycache__/
 .venv
 env/
 venv/
+font/
 
 # uv
 .python-version
@@ -26,3 +27,5 @@ demo_*.py
 *.onnx
 *.txt
 .aider*
+
+
