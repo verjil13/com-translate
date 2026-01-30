@@ -15,6 +15,7 @@ from app.account.auth.auth_client import AuthClient, USER_INFO_GROUP, \
     EMAIL_KEY, TIER_KEY, CREDITS_KEY, MONTHLY_CREDITS_KEY
 from app.account.config import API_BASE_URL, FRONTEND_BASE_URL
 from app.update_checker import UpdateChecker
+from modules.utils.paths import get_user_data_dir
 
 
 logger = logging.getLogger(__name__)
@@ -147,21 +148,9 @@ class SettingsPage(QtWidgets.QWidget):
         if service:
             normalized = self.ui.value_mappings.get(service, service)
             creds = {'save_key': save_keys}
-            if normalized == "Microsoft Azure":
-                creds.update({
-                    'api_key_ocr': _text_or_none("Microsoft Azure_api_key_ocr"),
-                    # 'api_key_translator': _text_or_none("Microsoft Azure_api_key_translator"),
-                    # 'region_translator': _text_or_none("Microsoft Azure_region"),
-                    'endpoint': _text_or_none("Microsoft Azure_endpoint"),
-                })
-            elif normalized == "Custom":
+            if normalized == "Custom":
                 for field in ("api_key", "api_url", "model"):
                     creds[field] = _text_or_none(f"Custom_{field}")
-            elif normalized == "Yandex":
-                creds['api_key'] = _text_or_none("Yandex_api_key")
-                creds['folder_id'] = _text_or_none("Yandex_folder_id")
-            else:
-                creds['api_key'] = _text_or_none(f"{normalized}_api_key")
 
             return creds
 
@@ -213,21 +202,21 @@ class SettingsPage(QtWidgets.QWidget):
     def import_font(self, file_paths: list[str]):
 
         file_paths = [f for f in file_paths 
-                      if f.endswith((".ttf", ".ttc", ".otf", ".woff", ".woff2"))]
+                      if f.lower().endswith((".ttf", ".ttc", ".otf", ".woff", ".woff2"))]
+        
+        # Determine user font directory
+        user_font_dir = os.path.join(get_user_data_dir(), "fonts")
 
-        current_file_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..', '..'))
-        font_folder_path = os.path.join(project_root, 'resources', 'fonts')
-
-        if not os.path.exists(font_folder_path):
-            os.makedirs(font_folder_path)
+        if not os.path.exists(user_font_dir):
+            os.makedirs(user_font_dir, exist_ok=True)
 
         if file_paths:
             for file in file_paths:
-                shutil.copy(file, font_folder_path)
+                shutil.copy(file, user_font_dir)
                 
-            font_files = [os.path.join(font_folder_path, f) for f in os.listdir(font_folder_path) 
-                      if f.endswith((".ttf", ".ttc", ".otf", ".woff", ".woff2"))]
+            # Reload fonts from user directory
+            font_files = [os.path.join(user_font_dir, f) for f in os.listdir(user_font_dir) 
+                      if f.lower().endswith((".ttf", ".ttc", ".otf", ".woff", ".woff2"))]
             
             font_families = []
             for font in font_files:
@@ -281,20 +270,11 @@ class SettingsPage(QtWidgets.QWidget):
         if save_keys:
             for service, cred in credentials.items():
                 translated_service = self.ui.value_mappings.get(service, service)
-                if translated_service == "Microsoft Azure":
-                    settings.setValue(f"{translated_service}_api_key_ocr", cred['api_key_ocr'])
-                    # settings.setValue(f"{translated_service}_api_key_translator", cred['api_key_translator'])
-                    # settings.setValue(f"{translated_service}_region_translator", cred['region_translator'])
-                    settings.setValue(f"{translated_service}_endpoint", cred['endpoint'])
-                elif translated_service == "Custom":
+                
+                if translated_service == "Custom":
                     settings.setValue(f"{translated_service}_api_key", cred['api_key'])
                     settings.setValue(f"{translated_service}_api_url", cred['api_url'])
                     settings.setValue(f"{translated_service}_model", cred['model'])
-                elif translated_service == "Yandex":
-                    settings.setValue(f"{translated_service}_api_key", cred['api_key'])
-                    settings.setValue(f"{translated_service}_folder_id", cred['folder_id'])
-                else:
-                    settings.setValue(f"{translated_service}_api_key", cred['api_key'])
         else:
             settings.remove('credentials')  # Clear all credentials if save_keys is unchecked
         settings.endGroup()
@@ -407,20 +387,11 @@ class SettingsPage(QtWidgets.QWidget):
         if save_keys:
             for service in self.ui.credential_services:
                 translated_service = self.ui.value_mappings.get(service, service)
-                if translated_service == "Microsoft Azure":
-                    self.ui.credential_widgets["Microsoft Azure_api_key_ocr"].setText(settings.value(f"{translated_service}_api_key_ocr", ''))
-                    # self.ui.credential_widgets["Microsoft Azure_api_key_translator"].setText(settings.value(f"{translated_service}_api_key_translator", ''))
-                    # self.ui.credential_widgets["Microsoft Azure_region"].setText(settings.value(f"{translated_service}_region_translator", ''))
-                    self.ui.credential_widgets["Microsoft Azure_endpoint"].setText(settings.value(f"{translated_service}_endpoint", ''))
-                elif translated_service == "Custom":
+                
+                if translated_service == "Custom":
                     self.ui.credential_widgets[f"{translated_service}_api_key"].setText(settings.value(f"{translated_service}_api_key", ''))
                     self.ui.credential_widgets[f"{translated_service}_api_url"].setText(settings.value(f"{translated_service}_api_url", ''))
                     self.ui.credential_widgets[f"{translated_service}_model"].setText(settings.value(f"{translated_service}_model", ''))
-                elif translated_service == "Yandex":
-                    self.ui.credential_widgets[f"{translated_service}_api_key"].setText(settings.value(f"{translated_service}_api_key", ''))
-                    self.ui.credential_widgets[f"{translated_service}_folder_id"].setText(settings.value(f"{translated_service}_folder_id", ''))
-                else:
-                    self.ui.credential_widgets[f"{translated_service}_api_key"].setText(settings.value(f"{translated_service}_api_key", ''))
         settings.endGroup()
 
         # ADDED: Load user info and update account view 
