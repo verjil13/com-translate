@@ -613,7 +613,8 @@ class ComicTranslate(ComicTranslateUI):
         
         source_lang = self.s_combo.currentText()
         target_lang = self.t_combo.currentText()
-        if not is_there_text(self.blk_list) or not validate_translator(self, source_lang, target_lang):
+        #if not is_there_text(self.blk_list) or not validate_translator(self, source_lang, target_lang):
+        if not is_there_text(self.blk_list) or not validate_translator(self, target_lang):    
             return       
             
         '''
