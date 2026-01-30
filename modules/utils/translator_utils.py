@@ -91,7 +91,9 @@ def normalize_repeating_chars_advanced(text: str) -> str:
         "ま●こ": "pussy",
         "ま○こ": "pussy",
         #"ち●こ": "ちんこ",
-        "ち●こ": "dick",  
+        "ち●こ": "dick",
+        "ち●ぽ": "dick",
+        "ち○ぽ": "dick"
         # сюда можно добавлять новые слова
     }
     for censored, normal in censored_dict.items():
@@ -141,7 +143,7 @@ def post_process_translation(text: str) -> str:
     text = text.lstrip()
     
      # --- 3) Замена сердечек ♥ на ♡ ---
-    text = text.replace("♥", "♡")
+    text = re.sub(r"[♥❤](?:️)?", "♡", text)
 
     return text
 '''
