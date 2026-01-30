@@ -26,7 +26,13 @@ def main():
     # Set the application icon
     icon = QIcon(":/icons/window_icon.png")  
     app.setWindowIcon(icon)
+    '''
+    old = QSettings("ComicLabs", "ComicTranslate") #
+    new = QSettings("ComicLabs", "MyComicsTranslate") #
 
+    for key in old.allKeys(): #
+        new.setValue(key, old.value(key)) #
+    '''
     settings = QSettings("ComicLabs", "MyComicsTranslate")
     selected_language = settings.value('language', get_system_language())
     if selected_language != 'English':
