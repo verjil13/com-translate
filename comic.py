@@ -17,7 +17,7 @@ def main():
     if sys.platform == "win32":
         # Necessary Workaround to set Taskbar Icon on Windows
         import ctypes
-        myappid = u'ComicLabs.ComicTranslate' # arbitrary string
+        myappid = u'ComicLabs.MyComicsTranslate' # arbitrary string
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     # Create QApplication directly instead of using the context manager
@@ -27,7 +27,7 @@ def main():
     icon = QIcon(":/icons/window_icon.png")  
     app.setWindowIcon(icon)
 
-    settings = QSettings("ComicLabs", "ComicTranslate")
+    settings = QSettings("ComicLabs", "MyComicsTranslate")
     selected_language = settings.value('language', get_system_language())
     if selected_language != 'English':
         load_translation(app, selected_language)  

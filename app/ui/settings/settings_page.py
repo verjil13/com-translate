@@ -199,7 +199,7 @@ class SettingsPage(QtWidgets.QWidget):
 
     # With the mappings, settings are saved with English values and loaded in the selected language
     def save_settings(self):
-        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings = QSettings("ComicLabs", "MyComicsTranslate")
         all_settings = self.get_all_settings()
 
         def process_group(group_key, group_value, settings_obj: QSettings):
@@ -247,7 +247,7 @@ class SettingsPage(QtWidgets.QWidget):
 
     def load_settings(self):
         self._loading_settings = True
-        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings = QSettings("ComicLabs", "MyComicsTranslate")
 
         # Load language
         language = settings.value('language', 'English')

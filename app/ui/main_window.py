@@ -453,7 +453,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         # Main Text Settings Layout
         main_text_settings_layout = QtWidgets.QHBoxLayout()
 
-        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings = QSettings("ComicLabs", "MyComicsTranslate")
         settings.beginGroup('text_rendering')
         dflt_clr = settings.value('color', '#000000')
         dflt_outline_check = settings.value('outline', True, type=bool)

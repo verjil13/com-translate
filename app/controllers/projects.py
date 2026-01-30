@@ -228,7 +228,7 @@ class ProjectController:
         self.main.settings_page.ui.extra_context.setPlainText(saved_ctx)
 
     def save_main_page_settings(self):
-        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings = QSettings("ComicLabs", "MyComicsTranslate")
 
         self.process_group('text_rendering', self.main.render_settings(), settings)
 
@@ -252,7 +252,7 @@ class ProjectController:
         settings.endGroup()
 
     def load_main_page_settings(self):
-        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings = QSettings("ComicLabs", "MyComicsTranslate")
         settings.beginGroup("main_page")
 
         # Load languages and convert back to current language
