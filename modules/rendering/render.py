@@ -244,7 +244,7 @@ def pyside_word_wrap(
 def get_best_render_area(
     blk_list: List[TextBlock],
     img,
-    inpainted_img
+    inpainted_img=None
 ):
     """
     Автоматический режим:
@@ -253,8 +253,8 @@ def get_best_render_area(
     """
 
 
-    if inpainted_img is None or inpainted_img.size == 0:
-        return blk_list
+    #if inpainted_img is None or inpainted_img.size == 0:
+    #    return blk_list
 
     for blk in blk_list:
         if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:
@@ -327,6 +327,8 @@ def manual_wrap(
     init_font_size: int = 40,
     min_font_size: int = 10
 ):
+    target_lang = main_page.lang_mapping.get(main_page.t_combo.currentText(), None)
+    trg_lng_cd = get_language_code(target_lang)                                                                                   
     for blk in blk_list:
         x1, y1, width, height = blk.xywh
         translation = blk.translation
