@@ -28,4 +28,5 @@ demo_*.py
 *.txt
 .aider*
 *.gz
-
+!env.lock/
+!env.lock/*.txt

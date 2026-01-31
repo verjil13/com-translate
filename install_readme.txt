@@ -32,7 +32,9 @@ conda-unpack
 Дополнительно 
 mkdir env.lock
 conda list --explicit > env.lock/conda-win-cu129.lock
+pip freeze > env.lock/requirements.lock.txt
 
 //Восстановление
-conda create -p ./env --file conda-win-cu129.lock
-conda activate ./env
+conda create -p .\env --file env.lock/conda-win-cu129.lock
+conda activate .\env
+pip install -r env.lock/requirements.lock.txt
