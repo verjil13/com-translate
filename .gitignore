@@ -27,5 +27,5 @@ demo_*.py
 *.onnx
 *.txt
 .aider*
-
+*.gz
 

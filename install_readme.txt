@@ -15,4 +15,24 @@ conda env remove -p .\env #удаление
 
 conda env create -f env.yml -p .\env #создание с экспортом из файла
 
+1)
+///архивация окружения
+conda activate .\env
+conda pack -p .\env -o env-win-cu129.tar.gz
 
+//восстановление окружения
+mkdir env
+tar -xzf env-win-cu129.tar.gz -C env
+
+env\Scripts\activate
+conda-unpack
+
+2)
+//////////////////////////
+Дополнительно 
+mkdir env.lock
+conda list --explicit > env.lock/conda-win-cu129.lock
+
+//Восстановление
+conda create -p ./env --file conda-win-cu129.lock
+conda activate ./env
