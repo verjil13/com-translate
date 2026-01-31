@@ -1,5 +1,4 @@
 import numpy as np
-import pyphen
 
 from typing import Tuple, List
 
@@ -24,27 +23,6 @@ from modules.utils.language_utils import get_language_code
 from dataclasses import dataclass
 
 
-# ============================================================
-# pyphen (русский перенос)
-# ============================================================
-
-_ru_dic = pyphen.Pyphen(lang="ru")
-
-
-def hyphenate_ru(word: str) -> Tuple[str, str]:
-    """
-    Типографский перенос русского слова.
-    Возвращает (левая_часть, правая_часть)
-    """
-    parts = _ru_dic.inserted(word).split("-")
-    if len(parts) < 2:
-        return word, ""
-    return "-".join(parts[:-1]), parts[-1]
-
-
-# ============================================================
-# DATA
-# ============================================================
 
 @dataclass
 class TextRenderingSettings:
@@ -62,11 +40,6 @@ class TextRenderingSettings:
     underline: bool
     line_spacing: str
     direction: Qt.LayoutDirection
-
-
-# ============================================================
-# PIL HELPERS
-# ============================================================
 
 def array_to_pil(rgb_image: np.ndarray):
     return Image.fromarray(rgb_image)
@@ -102,8 +75,122 @@ def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str,
     mutable_message = text
     font_size = init_font_size
     font = ImageFont.truetype(font_pth, font_size)
+    ###
+    def eval_metrics(txt, font):
+        """Quick helper function to calculate width/height of text."""
+        (left, top, right, bottom) = ImageDraw.Draw(image).multiline_textbbox(xy=tbbox_top_left, text=txt, font=font, align=align, spacing=spacing)
+        return (right-left, bottom-top)
+
+    while font_size > min_font_size:
+        font = font.font_variant(size=font_size)
+        width, height = eval_metrics(mutable_message, font)
+        if height > roi_height:
+            font_size -= 0.75  # Reduce pointsize
+            mutable_message = text  # Restore original text
+        elif width > roi_width:
+            columns = len(mutable_message)
+            while columns > 0:
+                columns -= 1
+                if columns == 0:
+                    break
+                mutable_message = '\n'.join(hyphen_wrap(text, columns, break_on_hyphens=False, break_long_words=False, hyphenate_broken_words=True)) 
+                wrapped_width, _ = eval_metrics(mutable_message, font)
+                if wrapped_width <= roi_width:
+                    break
+            if columns < 1:
+                font_size -= 0.75  # Reduce pointsize
+                mutable_message = text  # Restore original text
+        else:
+            break
+
+    if font_size <= min_font_size:
+        font_size = min_font_size
+        mutable_message = text
+        font = font.font_variant(size=font_size)
+
+        # Wrap text to fit within as much as possible
+        # Minimize cost function: (width - roi_width)^2 + (height - roi_height)^2
+        # This is a brute force approach, but it works well enough
+        min_cost = 1e9
+        min_text = text
+        for columns in range(1, len(text)):
+            wrapped_text = '\n'.join(hyphen_wrap(text, columns, break_on_hyphens=False, break_long_words=False, hyphenate_broken_words=True))
+            wrapped_width, wrapped_height = eval_metrics(wrapped_text, font)
+            cost = (wrapped_width - roi_width)**2 + (wrapped_height - roi_height)**2
+            if cost < min_cost:
+                min_cost = cost
+                min_text = wrapped_text
+
+        mutable_message = min_text
+    
+    return mutable_message, font_size
+############################################
+def get_best_render_area(
+    blk_list: List[TextBlock],
+    img,
+    inpainted_img=None
+):
+    """
+    Автоматический режим:
+    - определяет область для рендера
+    - ЦЕНТРИРУЕТ текст по вертикали и горизонтали внутри пузыря
+    """
 
 
+    #if inpainted_img is None or inpainted_img.size == 0:
+    #    return blk_list
+
+    for blk in blk_list:
+        if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:
+            continue
+
+        translation = blk.translation or ""
+        if not translation.strip():
+            continue
+
+        has_spaces = " " in translation.strip()
+        is_vertical_text = not has_spaces
+
+        # Базовая область
+        text_draw_bounds = shrink_bbox(
+            blk.bubble_xyxy,
+            0.3 if is_vertical_text else 0.05
+        )
+
+        x1, y1, x2, y2 = text_draw_bounds
+        box_w = x2 - x1
+        box_h = y2 - y1
+
+        # --------------------------------------------------
+        # ❌ СТАРЫЙ РУЧНОЙ СДВИГ (ОСТАВЛЕН, КАК ПРОСИЛ)
+        # --------------------------------------------------
+        # vertical_offset = int(box_h * 0.08)
+        # blk.xyxy[:] = [x1, y1 + vertical_offset, x2, y2]
+        # continue
+
+        # --------------------------------------------------
+        # ✅ НОВОЕ: АВТОЦЕНТРИРОВАНИЕ
+        # --------------------------------------------------
+
+        # Берём текущий bbox (его размер уже подогнан ранее)
+        cur_x1, cur_y1, cur_x2, cur_y2 = blk.xyxy
+        cur_w = cur_x2 - cur_x1
+        cur_h = cur_y2 - cur_y1
+
+        # Центр пузыря
+        center_x = x1 + ((0.9 * box_w) // 2)
+        center_y = y1 + ((1.2 * box_h) // 2)
+
+        # Новый bbox — по центру
+        new_x1 = int(center_x - cur_w // 2)
+        new_y1 = int(center_y - cur_h // 2)
+        new_x2 = new_x1 + cur_w
+        new_y2 = new_y1 + cur_h
+
+        blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
+
+    adjust_blks_size(blk_list, img, -5, -5)
+    return blk_list
 
 # ============================================================
 # PYSIDE WORD WRAP (исправленный)
@@ -234,80 +321,6 @@ def pyside_word_wrap(
     font_for_measure = prepare_font(min_font_size)
     wrapped_text, _ = wrap_text(text, font_for_measure)
     return wrapped_text, min_font_size
-
-
-
-# ============================================================
-# GET BEST RENDER AREA
-# ============================================================
-
-def get_best_render_area(
-    blk_list: List[TextBlock],
-    img,
-    inpainted_img=None
-):
-    """
-    Автоматический режим:
-    - определяет область для рендера
-    - ЦЕНТРИРУЕТ текст по вертикали и горизонтали внутри пузыря
-    """
-
-
-    #if inpainted_img is None or inpainted_img.size == 0:
-    #    return blk_list
-
-    for blk in blk_list:
-        if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:
-            continue
-
-        translation = blk.translation or ""
-        if not translation.strip():
-            continue
-
-        has_spaces = " " in translation.strip()
-        is_vertical_text = not has_spaces
-
-        # Базовая область
-        text_draw_bounds = shrink_bbox(
-            blk.bubble_xyxy,
-            0.3 if is_vertical_text else 0.05
-        )
-
-        x1, y1, x2, y2 = text_draw_bounds
-        box_w = x2 - x1
-        box_h = y2 - y1
-
-        # --------------------------------------------------
-        # ❌ СТАРЫЙ РУЧНОЙ СДВИГ (ОСТАВЛЕН, КАК ПРОСИЛ)
-        # --------------------------------------------------
-        # vertical_offset = int(box_h * 0.08)
-        # blk.xyxy[:] = [x1, y1 + vertical_offset, x2, y2]
-        # continue
-
-        # --------------------------------------------------
-        # ✅ НОВОЕ: АВТОЦЕНТРИРОВАНИЕ
-        # --------------------------------------------------
-
-        # Берём текущий bbox (его размер уже подогнан ранее)
-        cur_x1, cur_y1, cur_x2, cur_y2 = blk.xyxy
-        cur_w = cur_x2 - cur_x1
-        cur_h = cur_y2 - cur_y1
-
-        # Центр пузыря
-        center_x = x1 + ((0.9 * box_w) // 2)
-        center_y = y1 + ((1.2 * box_h) // 2)
-
-        # Новый bbox — по центру
-        new_x1 = int(center_x - cur_w // 2)
-        new_y1 = int(center_y - cur_h // 2)
-        new_x2 = new_x1 + cur_w
-        new_y2 = new_y1 + cur_h
-
-        blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
-
-    adjust_blks_size(blk_list, img, -5, -5)
-    return blk_list
-
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
