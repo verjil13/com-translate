@@ -3,6 +3,11 @@ import numpy as np
 import shutil
 import tempfile
 import re
+import regex as ure
+import unicodedata
+import logging
+
+from typing import List
 from typing import Callable, Tuple
 
 from PySide6 import QtCore
@@ -38,6 +43,13 @@ from app.controllers.text import TextController
 from app.controllers.webtoons import WebtoonController
 from collections import deque
 
+# Любая буква любого языка (Unicode category: Letter)
+LETTER_RE = ure.compile(r'\p{L}')
+TRASH_RE = ure.compile(
+    r'^[\p{N}\p{P}\p{S}\p{Z}'       # стандартные числа, символы, пунктуация, пробелы
+    r'\uFF01-\uFF5E]*$'              # fullwidth ! " # $ % & ... ~
+)
+logger = logging.getLogger(__name__)
 
 # Ensure any pre-declared mandatory models
 ensure_mandatory_models()
@@ -241,30 +253,41 @@ class ComicTranslate(ComicTranslateUI):
             self.undo_group.activeStack().push(command)
             
     ##########################################        
-    def auto_delete_trash_blocks(self):
-        if not self.blk_list:
-            return
-
-        TRASH_RE = re.compile(r'^[\s.!♪★☆☉♀♂♠♡♣♥♦♭♯✩?…！？。、,．]+$')     
-        before = len(self.blk_list)
-        new_blk_list = []
+    def auto_delete_trash_blocks(self, blk_list: List = None) -> List:  
+        """
+        Удаляет текстовые блоки без осмысленного текста.
+        Если blk_list не передан, используется self.blk_list.
+        """
+        if blk_list is None:
+            blk_list = self.blk_list
     
-        for blk in self.blk_list:
+        new_blk_list = []
+        removed_count = 0
+    
+        for blk in blk_list:
             text = (blk.text or "").strip()
             if not text:
+                removed_count += 1
+                logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
                 continue
     
-            if TRASH_RE.fullmatch(text):
-                print(f"🗑 Auto-deleted trash block: '{text}'")
-                continue
+            text = unicodedata.normalize("NFC", text)
     
-            new_blk_list.append(blk)
+            # есть хотя бы одна буква → оставляем
+            if LETTER_RE.search(text):
+                new_blk_list.append(blk)
+            # весь текст — мусор (числа, символы, пунктуация) → удаляем
+            elif TRASH_RE.fullmatch(text):
+                removed_count += 1
+                logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+            else:
+                # неожиданные символы → оставляем
+                new_blk_list.append(blk)
     
-        self.blk_list = new_blk_list
-    
-        after = len(self.blk_list)
-        if before != after:
-            print(f"🧹 Trash blocks removed: {before - after}")   
+        if removed_count:
+            logger.info(f"🧹 Trash blocks removed: {removed_count}")
+        print("123")
+        return new_blk_list
             
     ##########################################################
     def batch_mode_selected(self):
@@ -425,7 +448,7 @@ class ComicTranslate(ComicTranslateUI):
         self.enable_hbutton_group()
 
     def start_batch_process(self):
-        #self.auto_delete_trash_blocks() #
+
         for image_path in self.image_files:
             source_lang = self.image_states[image_path]['source_lang']
             target_lang = self.image_states[image_path]['target_lang']
@@ -506,7 +529,7 @@ class ComicTranslate(ComicTranslateUI):
                           self.default_error_handler, self.on_manual_finished, load_rects)
 
     def finish_ocr_translate(self, single_block=False):
-        self.auto_delete_trash_blocks()
+        self.blk_list = self.auto_delete_trash_blocks(self.blk_list)
         
         if self.blk_list:
             if single_block:
@@ -547,9 +570,7 @@ class ComicTranslate(ComicTranslateUI):
                 lambda: self.finish_ocr_translate(single_block)
             )
 
-    def translate_image(self, single_block=False):
-        #self.auto_delete_trash_blocks() #автоудаление блоков
-        
+    def translate_image(self, single_block=False):        
         source_lang = self.s_combo.currentText()
         target_lang = self.t_combo.currentText()
         if not is_there_text(self.blk_list) or not validate_translator(self, source_lang, target_lang):

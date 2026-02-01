@@ -7,6 +7,8 @@ import traceback
 import imkit as imk
 import time
 import re
+import regex as ure
+import unicodedata
 from datetime import datetime
 from typing import List
 from PySide6.QtGui import QColor
@@ -28,7 +30,12 @@ from app.ui.canvas.save_renderer import ImageSaveRenderer
 logger = logging.getLogger(__name__)
 
 ##TRASH_RE = re.compile(r'^[\s.!?…！？。、．]+$')
-
+# Любая буква любого языка (Unicode category: Letter)
+LETTER_RE = ure.compile(r'\p{L}')
+TRASH_RE = ure.compile(
+    r'^[\p{N}\p{P}\p{S}\p{Z}'       # стандартные числа, символы, пунктуация, пробелы
+    r'\uFF01-\uFF5E]*$'              # fullwidth ! " # $ % & ... ~
+)
 
 
 
@@ -87,25 +94,40 @@ class BatchProcessor:
     # --------------------------------------------------
     # Функция для авто-удаления «мусорных» блоков
     # --------------------------------------------------
-    def auto_delete_trash_blocks(self, blk_list: List) -> List:
+    def auto_delete_trash_blocks(self, blk_list: List = None) -> List:
         """
-        Удаляет текстовые блоки, которые не содержат осмысленного текста:
-        - Только символы вроде '.', '!', '?', '…', '！？。、'
-        - Многоточия с пробелами, повторяющиеся знаки
-        """        
-        TRASH_RE = re.compile(r'^[\s.!♪★☆☉♀♂♠♡♣♥♦♭♯✩?…！？。、,．]+$')
+        Удаляет текстовые блоки без осмысленного текста.
+        Если blk_list не передан, используется self.blk_list.
+        """
+        if blk_list is None:
+            blk_list = self.blk_list
+    
         new_blk_list = []
         removed_count = 0
+    
         for blk in blk_list:
-            if blk.text and not TRASH_RE.fullmatch(blk.text.strip()):
-                new_blk_list.append(blk)
-            else:
+            text = (blk.text or "").strip()
+            if not text:
                 removed_count += 1
                 logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+                continue
+    
+            text = unicodedata.normalize("NFC", text)
+    
+            # есть хотя бы одна буква → оставляем
+            if LETTER_RE.search(text):
+                new_blk_list.append(blk)
+            # весь текст — мусор (числа, символы, пунктуация) → удаляем
+            elif TRASH_RE.fullmatch(text):
+                removed_count += 1
+                logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+            else:
+                # неожиданные символы → оставляем
+                new_blk_list.append(blk)
+    
         if removed_count:
             logger.info(f"🧹 Trash blocks removed: {removed_count}")
-            
-        print(321)    
+        print("321")
         return new_blk_list
 
     # --------------------------------------------------
