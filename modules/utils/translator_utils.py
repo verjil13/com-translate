@@ -90,10 +90,16 @@ def normalize_repeating_chars_advanced(text: str) -> str:
         #"ま●こ": "まんこ",
         "ま●こ": "pussy",
         "ま○こ": "pussy",
+        "ま☉こ": "pussy",
         #"ち●こ": "ちんこ",
         "ち●こ": "dick",
+        "ち○こ": "dick",
+        "ち☉こ": "dick",
         "ち●ぽ": "dick",
-        "ち○ぽ": "dick"
+        "ち○ぽ": "dick",
+        "ち☉ぽ": "dick",
+        
+        "♥":"♡"
         # сюда можно добавлять новые слова
     }
     for censored, normal in censored_dict.items():

@@ -244,10 +244,8 @@ class ComicTranslate(ComicTranslateUI):
     def auto_delete_trash_blocks(self):
         if not self.blk_list:
             return
-    
-        #TRASH_RE = re.compile(r'^[\s.!?…！？。、,]+$')
-        TRASH_RE = re.compile(r'^[\s.!♪★☆☉♀♂♠♡♣♥♦♭♯✩?…！？。、,．]+$') 
-    
+
+        TRASH_RE = re.compile(r'^[\s.!♪★☆☉♀♂♠♡♣♥♦♭♯✩?…！？。、,．]+$')     
         before = len(self.blk_list)
         new_blk_list = []
     
