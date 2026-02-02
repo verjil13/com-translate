@@ -27,6 +27,7 @@ from modules.utils.paths import get_user_data_dir
 from .canvas.image_viewer import ImageViewer
 from .settings.settings_page import SettingsPage
 from .list_view import PageListView
+from .search_replace_panel import SearchReplacePanel
 
 
 user_font_path = os.path.join(get_user_data_dir(), "fonts")
@@ -227,6 +228,14 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         nav_tool_group.set_button_list(nav_tools)
         nav_tool_group.get_button_group().buttons()[0].setChecked(True)
 
+        # Toggle left sidebar Search / Replace (Ctrl+F / Ctrl+H)
+        self.search_sidebar_button = MToolButton()
+        self.search_sidebar_button.set_dayu_svg("search_line.svg")
+        self.search_sidebar_button.setToolTip(self.tr("Search / Replace (Ctrl+F)"))
+        self.search_sidebar_button.setCheckable(True)
+        self.search_sidebar_button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+        self.search_sidebar_button.toggled.connect(self._set_search_sidebar_visible)
+
         # Insert into existing project button and underlying browser
         self.insert_button = MToolButton()
         self.insert_button.set_dayu_svg("file-plus.svg")
@@ -246,12 +255,55 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         nav_rail_layout.addWidget(self.save_browser)
         nav_rail_layout.addWidget(self.save_all_browser)
         nav_rail_layout.addWidget(nav_divider)
+        nav_rail_layout.addWidget(self.search_sidebar_button)
         nav_rail_layout.addWidget(nav_tool_group)
         nav_rail_layout.addStretch()
 
         nav_rail_layout.setContentsMargins(0, 0, 0, 0)
 
         return nav_rail_layout
+
+    def _set_search_sidebar_visible(self, visible: bool):
+        if not hasattr(self, "search_panel") or not hasattr(self, "page_list"):
+            return
+        try:
+            self.search_panel.setVisible(bool(visible))
+            self.page_list.setVisible(not bool(visible))
+        except Exception:
+            return
+
+        if visible:
+            try:
+                self.search_panel.find_input.setFocus()
+                self.search_panel.find_input.selectAll()
+            except Exception:
+                pass
+
+    def show_search_sidebar(self, focus: str = "find"):
+        btn = getattr(self, "search_sidebar_button", None)
+        if btn is not None:
+            try:
+                with QtCore.QSignalBlocker(btn):
+                    btn.setChecked(True)
+            except Exception:
+                btn.setChecked(True)
+        self._set_search_sidebar_visible(True)
+        if focus == "replace":
+            try:
+                self.search_panel.replace_input.setFocus()
+                self.search_panel.replace_input.selectAll()
+            except Exception:
+                pass
+
+    def hide_search_sidebar(self):
+        btn = getattr(self, "search_sidebar_button", None)
+        if btn is not None:
+            try:
+                with QtCore.QSignalBlocker(btn):
+                    btn.setChecked(False)
+            except Exception:
+                btn.setChecked(False)
+        self._set_search_sidebar_visible(False)
 
     def _confirm_start_new_project(self) -> bool:
         """Ask for confirmation if there's unsaved work."""
@@ -362,6 +414,10 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         header_layout.addWidget(self.translate_button)
         header_layout.addWidget(self.cancel_button)
 
+        # Search / Replace (MTPE helper) - shown in left sidebar
+        self.search_panel = SearchReplacePanel(self)
+        self.search_panel.setVisible(False)
+
         # Left Side (Image Selection)
         left_layout = QtWidgets.QVBoxLayout()
         left_layout.addWidget(MDivider())
@@ -371,6 +427,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
 
         self.page_list.setLayout(self.image_card_layout)
         left_layout.addWidget(self.page_list)
+        left_layout.addWidget(self.search_panel)
         left_widget = QtWidgets.QWidget()
         left_widget.setLayout(left_layout)
 
@@ -408,7 +465,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         self.s_combo.setToolTip(self.tr("Source Language"))
         s_combo_text_layout.addWidget(self.s_combo)
         self.s_text_edit = MTextEdit()
-        self.s_text_edit.setFixedHeight(150)
+        self.s_text_edit.setFixedHeight(120)
         s_combo_text_layout.addWidget(self.s_text_edit)
         input_layout.addLayout(s_combo_text_layout)
 
@@ -419,7 +476,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         self.t_combo.setToolTip(self.tr("Target Language"))
         t_combo_text_layout.addWidget(self.t_combo)
         self.t_text_edit = MTextEdit()
-        self.t_text_edit.setFixedHeight(150)
+        self.t_text_edit.setFixedHeight(120)
         t_combo_text_layout.addWidget(self.t_text_edit)
 
         input_layout.addLayout(t_combo_text_layout)
@@ -464,7 +521,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         settings = QSettings("ComicLabs", "ComicTranslate")
         settings.beginGroup('text_rendering')
         dflt_clr = settings.value('color', '#000000')
-        dflt_outline_check = settings.value('outline', True, type=bool)
+        dflt_outline_check = settings.value('outline', False, type=bool)
         settings.endGroup()
         
         self.block_font_color_button = QtWidgets.QPushButton()
@@ -636,6 +693,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
         tools_layout.addWidget(inp_div)
         tools_layout.addLayout(inp_tools_lay)
         tools_layout.addWidget(self.brush_eraser_slider)
+        tools_layout.addStretch()
         tools_widget.setLayout(tools_layout)
 
         tools_scroll = QtWidgets.QScrollArea()
@@ -648,8 +706,7 @@ class ComicTranslateUI(QtWidgets.QMainWindow):
 
         right_layout.addLayout(input_layout)
         right_layout.addLayout(text_render_layout)
-        right_layout.addWidget(tools_scroll)
-        right_layout.addStretch()
+        right_layout.addWidget(tools_scroll, 1)
 
         right_widget = QtWidgets.QWidget()
         right_widget.setLayout(right_layout)
