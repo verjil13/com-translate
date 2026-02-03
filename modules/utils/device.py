@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 from typing import Any, Mapping, Optional
 import onnxruntime as ort
@@ -17,17 +16,17 @@ def torch_available() -> bool:
 
 def resolve_device(use_gpu: bool, backend: str = "onnx") -> str:
     """Return the best available device string for the specified backend.
-
+    
     Args:
         use_gpu: Whether to use GPU acceleration
         backend: Backend to use ('onnx' or 'torch')
-
+    
     Returns:
         Device string compatible with the specified backend
     """
     if not use_gpu:
         return "cpu"
-
+    
     if backend.lower() == "torch":
         return _resolve_torch_device(fallback_to_onnx=True)
     else:
@@ -64,29 +63,24 @@ def _resolve_torch_device(fallback_to_onnx: bool = False) -> str:
 
 
 def _resolve_onnx_device() -> str:
-    """Resolve the best available ONNX device."""
-    providers = ort.get_available_providers() 
-
+    """Resolve the best available ONNX device — TensorRT исключён."""
+    providers = ort.get_available_providers()
     if not providers:
         return "cpu"
 
+    # Порядок приоритета без TensorRT
     if "CUDAExecutionProvider" in providers:
         return "cuda"
-    
-    if "TensorrtExecutionProvider" in providers:
-        return "tensorrt"
-
     if "CoreMLExecutionProvider" in providers:
         return "coreml"
-    
     if "ROCMExecutionProvider" in providers:
         return "rocm"
-
     if "OpenVINOExecutionProvider" in providers:
         return "openvino"
 
-    # Fallback to CPU
+    # Fallback
     return "cpu"
+
 
 def tensors_to_device(data: Any, device: str) -> Any:
     """Move tensors in nested containers to device; returns the same structure.
@@ -110,20 +104,24 @@ def tensors_to_device(data: Any, device: str) -> Any:
 
     if isinstance(data, torch.Tensor):
         return data.to(torch_device)
+
     if isinstance(data, Mapping):
         return {k: tensors_to_device(v, device) for k, v in data.items()}
+
     if isinstance(data, (list, tuple)):
         seq = [tensors_to_device(v, device) for v in data]
         return type(data)(seq) if isinstance(data, tuple) else seq
+
     return data
 
-def get_providers(device: Optional[str] = None) -> list[Any]:
-    """Return a providers list for ONNXRuntime (optionally with provider options).
 
+def get_providers(device: Optional[str] = None) -> list[Any]:
+    """Return a providers list for ONNXRuntime — TensorRT полностью исключён.
+    
     Rules:
-    - If device is the string 'cpu' (case-insensitive) -> return ['CPUExecutionProvider']
-    - Otherwise return available providers with options for certain GPU providers
-    - If no providers are available, fall back to ['CPUExecutionProvider']
+    - If device is 'cpu' → return ['CPUExecutionProvider']
+    - Otherwise return available providers except TensorRT
+    - If nothing left → fallback to CPU
     """
     try:
         available = ort.get_available_providers()
@@ -136,17 +134,15 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
     if not available:
         return ['CPUExecutionProvider']
 
-    
-    # Use user data directory for cache
+    # Полностью убираем TensorRT
+    available = [p for p in available if p != "TensorrtExecutionProvider"]
+
+    # Папка для кэша моделей (только для поддерживаемых провайдеров)
     base_models_dir = os.path.join(get_user_data_dir(), "models")
-    
+
     # OpenVINO cache
     ov_cache_dir = os.path.join(base_models_dir, 'onnx-gpu-cache', 'openvino')
     os.makedirs(ov_cache_dir, exist_ok=True)
-
-    # TensorRT cache
-    trt_cache_dir = os.path.join(base_models_dir, 'onnx-gpu-cache', 'tensorrt')
-    os.makedirs(trt_cache_dir, exist_ok=True)
 
     # CoreML cache
     coreml_cache_dir = os.path.join(base_models_dir, 'onnx-gpu-cache', 'coreml')
@@ -158,13 +154,10 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
             'precision': 'FP32',
             'cache_dir': ov_cache_dir,
         },
-        'TensorrtExecutionProvider': {
-            'trt_engine_cache_enable': True,
-            'trt_engine_cache_path': trt_cache_dir,
-        },
         'CoreMLExecutionProvider': {
             'ModelCacheDirectory': coreml_cache_dir,
         }
+        # TensorrtExecutionProvider удалён 
     }
 
     configured: list[Any] = []
@@ -174,26 +167,27 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
         else:
             configured.append(p)
 
+    # Если после исключения TensorRT ничего не осталось — принудительно CPU
+    if not configured:
+        return ['CPUExecutionProvider']
+
     return configured
 
 
 def is_gpu_available() -> bool:
-    """Check if a valid GPU provider is available.
+    """Check if a valid GPU provider is available (TensorRT не считается).
     
     Returns False if only AzureExecutionProvider and/or CPUExecutionProvider are present.
-    Returns True if any other provider (CUDA, CoreML, etc.) is found.
+    Returns True if any other provider (CUDA, CoreML, OpenVINO, ROCM, etc.) is found.
     """
     try:
         providers = ort.get_available_providers()
     except Exception:
         return False
 
-    ignored_providers = {'AzureExecutionProvider', 'CPUExecutionProvider'}
-    available = set(providers)
-    
-    # If the only available providers are in the ignored list, return False
-    # logic: if available is a subset of ignored_providers, then we have nothing else.
-    if available.issubset(ignored_providers):
-        return False
-        
-    return True
+    # Игнорируем эти провайдеры
+    ignored_providers = {'AzureExecutionProvider', 'CPUExecutionProvider', 'TensorrtExecutionProvider'}
+
+    available = set(providers) - ignored_providers
+
+    return bool(available)
