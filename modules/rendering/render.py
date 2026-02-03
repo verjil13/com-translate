@@ -189,7 +189,11 @@ def get_best_render_area(
 
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
 
-    adjust_blks_size(blk_list, img, -5, -5)
+
+    if blk_list and blk_list[0].source_lang not in ['ko', 'zh']:
+        adjust_blks_size(blk_list, img, -5, -5)
+
+
     return blk_list
 
 # ============================================================

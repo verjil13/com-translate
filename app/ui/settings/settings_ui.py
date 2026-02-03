@@ -50,7 +50,6 @@ class SettingsPageUI(QtWidgets.QWidget):
         super(SettingsPageUI, self).__init__(parent)
 
         self.credential_widgets = {}
-        self.export_widgets = {}
 
         self.inpainters = ['LaMa', 'AOT']
         self.detectors = ['RT-DETR-v2']
@@ -214,8 +213,6 @@ class SettingsPageUI(QtWidgets.QWidget):
         # LLMs
         self.image_checkbox = self.llms_page.image_checkbox
         self.extra_context = self.llms_page.extra_context
-        self.temp_slider = self.llms_page.temp_slider
-        self.temp_edit = self.llms_page.temp_edit
 
         # Text rendering
         self.min_font_spinbox = self.text_rendering_page.min_font_spinbox
@@ -224,11 +221,11 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.uppercase_checkbox = self.text_rendering_page.uppercase_checkbox
 
         # Export
+        self.auto_save_checkbox = self.export_page.auto_save_checkbox
         self.raw_text_checkbox = self.export_page.raw_text_checkbox
         self.translated_text_checkbox = self.export_page.translated_text_checkbox
         self.inpainted_image_checkbox = self.export_page.inpainted_image_checkbox
-        self.export_widgets = self.export_page.export_widgets
-        self.from_file_types = self.export_page.from_file_types
+        self.archive_save_as_combo = self.export_page.archive_save_as_combo
 
         # Account
         self.sign_in_button = self.account_page.sign_in_button
@@ -301,7 +298,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             {"title": self.tr("Personalization"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Account"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Tools"), "avatar": MPixmap(".svg")},
-            {"title": self.tr("Translation Guidance"), "avatar": MPixmap(".svg")},
+            {"title": self.tr("LLMs"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Text Rendering"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Export"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Advanced"), "avatar": MPixmap(".svg")},

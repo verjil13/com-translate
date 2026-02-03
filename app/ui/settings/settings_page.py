@@ -121,18 +121,16 @@ class SettingsPage(QtWidgets.QWidget):
         return {
             'extra_context': self.ui.extra_context.toPlainText(),
             'image_input_enabled': self.ui.image_checkbox.isChecked(),
-            'temperature': float(self.ui.temp_edit.text()),
         }
 
     def get_export_settings(self):
         settings = {
+            'auto_save': self.ui.auto_save_checkbox.isChecked(),
             'export_raw_text': self.ui.raw_text_checkbox.isChecked(),
             'export_translated_text': self.ui.translated_text_checkbox.isChecked(),
             'export_inpainted_image': self.ui.inpainted_image_checkbox.isChecked(),
-            'save_as': {}
+            'archive_save_as': self.ui.archive_save_as_combo.currentText(),
         }
-        for file_type in self.ui.from_file_types:
-            settings['save_as'][f'.{file_type}'] = self.ui.export_widgets[f'.{file_type}_save_as'].currentText()
         return settings
 
     def get_credentials(self, service: str = ""):
@@ -347,34 +345,19 @@ class SettingsPage(QtWidgets.QWidget):
         settings.beginGroup('llm')
         self.ui.extra_context.setPlainText(settings.value('extra_context', ''))
         self.ui.image_checkbox.setChecked(settings.value('image_input_enabled', False, type=bool))
-        temp = settings.value('temperature', 1.0, type=float)
-        self.ui.temp_edit.setText(f"{temp:.2f}")
         settings.endGroup()
 
         # Load export settings
         settings.beginGroup('export')
+        self.ui.auto_save_checkbox.setChecked(settings.value('auto_save', True, type=bool))
         self.ui.raw_text_checkbox.setChecked(settings.value('export_raw_text', False, type=bool))
         self.ui.translated_text_checkbox.setChecked(settings.value('export_translated_text', False, type=bool))
         self.ui.inpainted_image_checkbox.setChecked(settings.value('export_inpainted_image', False, type=bool))
-        settings.beginGroup('save_as')
-        
-        # Default mappings for file format conversion
-        default_save_as = {
-            '.pdf': 'pdf',
-            '.epub': 'pdf',
-            '.cbr': 'cbz',
-            '.cbz': 'cbz',
-            '.cb7': 'cb7',
-            '.cbt': 'cbz',
-            '.zip': 'zip',
-            '.rar': 'zip'
-        }
-        
-        for file_type in self.ui.from_file_types:
-            file_ext = f'.{file_type}'
-            default_value = default_save_as.get(file_ext, file_type)
-            self.ui.export_widgets[f'{file_ext}_save_as'].setCurrentText(settings.value(file_ext, default_value))
-        settings.endGroup()  # save_as
+
+        # New: single global archive output format
+        archive_save_as = settings.value('archive_save_as', 'zip')
+        self.ui.archive_save_as_combo.setCurrentText(str(archive_save_as))
+
         settings.endGroup()  # export
 
         # Load credentials

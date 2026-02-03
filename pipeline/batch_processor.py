@@ -22,7 +22,7 @@ from modules.utils.image_utils import generate_mask, get_smart_text_color
 from modules.utils.language_utils import get_language_code, is_no_space_lang
 from modules.utils.common_utils import is_directory_empty
 from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations
-from modules.utils.archives import make
+from modules.utils.archives import make, resolve_save_as_ext
 from modules.rendering.render import get_best_render_area, pyside_word_wrap, is_vertical_block
 from modules.utils.device import resolve_device
 from modules.utils.exceptions import InsufficientCreditsException
@@ -470,22 +470,30 @@ class BatchProcessor:
                 self.main_page.blk_list = blk_list
                 
             render_save_dir = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-            if not os.path.exists(render_save_dir):
-                os.makedirs(render_save_dir, exist_ok=True)
-            sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
+            
+            # Conditional Save: Final Rendered Image
+            if export_settings['auto_save']:
+                if not os.path.exists(render_save_dir):
+                    os.makedirs(render_save_dir, exist_ok=True)
+                sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
 
-            renderer = ImageSaveRenderer(image)
-            viewer_state = self.main_page.image_states[image_path]['viewer_state'].copy()
-            patches = self.main_page.image_patches.get(image_path, [])
-            renderer.apply_patches(patches)
-            renderer.add_state_to_image(viewer_state)
-            renderer.save_image(sv_pth)
+                renderer = ImageSaveRenderer(image)
+                viewer_state = self.main_page.image_states[image_path]['viewer_state'].copy()
+                patches = self.main_page.image_patches.get(image_path, [])
+                renderer.apply_patches(patches)
+                renderer.add_state_to_image(viewer_state)
+                renderer.save_image(sv_pth)
+            else:
+                # If auto-save is OFF, we still want to apply the state to the image state
+                # so the user can verify it in the UI, but we don't write to disk.
+                pass
 
             self.emit_progress(index, total_images, 10, 10, False)
 
         archive_info_list = self.main_page.file_handler.archive_info
-        if archive_info_list:
-            save_as_settings = settings_page.get_export_settings()['save_as']
+        # Conditional Save: Archives (controlled by auto_save)
+        if archive_info_list and export_settings['auto_save']:
+            archive_save_as = settings_page.get_export_settings().get('archive_save_as')
             for archive_index, archive in enumerate(archive_info_list):
                 archive_index_input = total_images + archive_index
 
@@ -498,7 +506,7 @@ class BatchProcessor:
                 archive_ext = os.path.splitext(archive_path)[1]
                 archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
                 archive_directory = os.path.dirname(archive_path)
-                save_as_ext = f".{save_as_settings[archive_ext.lower()]}"
+                save_as_ext = resolve_save_as_ext(archive_ext, archive_save_as)
 
                 save_dir = os.path.join(archive_directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
                 check_from = os.path.join(archive_directory, f"comic_translate_{timestamp}")

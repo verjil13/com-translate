@@ -4,6 +4,7 @@ import logging
 import requests
 import numpy as np
 import imkit as imk
+from types import SimpleNamespace
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
@@ -18,7 +19,7 @@ from modules.utils.language_utils import get_language_code, is_no_space_lang
 from modules.utils.common_utils import is_directory_empty
 from modules.utils.translator_utils import format_translations
 from modules.rendering.render import is_vertical_block
-from modules.utils.archives import make
+from modules.utils.archives import make, resolve_save_as_ext
 from modules.rendering.render import get_best_render_area, pyside_word_wrap
 from app.ui.canvas.text_item import OutlineInfo, OutlineType
 from app.ui.canvas.text.text_item_properties import TextItemProperties
@@ -334,8 +335,9 @@ class WebtoonBatchProcessor:
         if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
             return None
 
-        # if blk_list:
-        #     get_best_render_area(blk_list, combined_image, inpaint_input_img)
+        # Note: get_best_render_area is applied later per-virtual-page (after merge/dedup)
+        # in _emit_and_store_virtual_page_results, so it affects live rendering, saved state,
+        # and the final physical render.
 
         # Progress update: Pre-translation setup completed
         self.main_page.progress_update.emit(current_physical_page, total_images, 6, 10, False)
@@ -742,6 +744,12 @@ class WebtoonBatchProcessor:
         if webtoon_manager and vpage.physical_page_index < len(webtoon_manager.image_positions):
             page_y_position_in_scene = webtoon_manager.image_positions[vpage.physical_page_index]
 
+        # Ensure blocks use the best (bubble-aware) render bounds in VIRTUAL coordinates.
+        # This is the single correct place to do it in webtoon mode: after merge/dedup and
+        # before wrapping + state creation.
+        virtual_img = SimpleNamespace(shape=(vpage.crop_height, vpage.physical_width, 3))
+        get_best_render_area(blk_list_virtual, virtual_img)
+
         # Process each block
         for blk_virtual in blk_list_virtual:
             physical_coords = vpage.virtual_to_physical_coords(blk_virtual.xyxy)
@@ -971,12 +979,17 @@ class WebtoonBatchProcessor:
         # Continue Image Rendering
         viewer_state = self.main_page.image_states[image_path].get('viewer_state', {}).copy()
         renderer.add_state_to_image(viewer_state, page_idx, self.main_page)
-        render_save_dir = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-        if not os.path.exists(render_save_dir):
-            os.makedirs(render_save_dir, exist_ok=True)
-        sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
-        renderer.save_image(sv_pth)
-        logger.info(f"Saved final rendered page: {sv_pth}")
+        
+        # Conditional Save: Final Rendered Image (controlled by auto_save)
+        if export_settings['auto_save']:
+            render_save_dir = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
+            if not os.path.exists(render_save_dir):
+                os.makedirs(render_save_dir, exist_ok=True)
+            sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
+            renderer.save_image(sv_pth)
+            logger.info(f"Saved final rendered page: {sv_pth}")
+        else:
+            logger.info(f"Auto-save is OFF. Skipping final image save for page {page_idx}.")
 
     def webtoon_batch_process(self, selected_paths: List[str] = None):
         """
@@ -1147,8 +1160,12 @@ class WebtoonBatchProcessor:
 
         # Step 4: Handle archive creation
         archive_info_list = self.main_page.file_handler.archive_info
-        if archive_info_list:
-            save_as_settings = self.main_page.settings_page.get_export_settings()['save_as']
+        # Conditional Save: Archives (controlled by auto_save)
+        # Note: We also need to fetch the setting here since webtoon_batch_process is the entry point
+        auto_save = self.main_page.settings_page.get_export_settings()['auto_save']
+        
+        if archive_info_list and auto_save:
+            archive_save_as = self.main_page.settings_page.get_export_settings().get('archive_save_as')
             for archive_index, archive in enumerate(archive_info_list):
                 archive_index_input = total_images + archive_index
 
@@ -1161,7 +1178,7 @@ class WebtoonBatchProcessor:
                 archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
                 archive_directory = os.path.dirname(archive_path)
                 archive_ext = os.path.splitext(archive_path)[1]
-                save_as_ext = f".{save_as_settings.get(archive_ext.lower(), 'cbz')}"
+                save_as_ext = resolve_save_as_ext(archive_ext, archive_save_as)
 
                 save_dir = os.path.join(archive_directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
                 check_from = os.path.join(archive_directory, f"comic_translate_{timestamp}")
