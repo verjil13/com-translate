@@ -28,5 +28,6 @@ demo_*.py
 *.onnx
 *.txt
 .aider*
-
-
+*.gz
+!env.lock/
+!env.lock/*.txt
