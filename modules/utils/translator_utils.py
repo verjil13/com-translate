@@ -44,14 +44,6 @@ def apply_translations_to_blocks(blk_list: list[TextBlock], translations: dict[i
 
 
 def normalize_repeating_chars_advanced(text: str) -> str:
-    """
-    Расширенная нормализация повторяющихся символов:
-
-    1) Для символов типа ~ оставляем 1 повтор.
-    2) Для символов типа あ оставляем 2 повтора.
-    3) Для всех остальных символов оставляем максимум 3 повторов.
-    4) Удаляем полностью конструкции, например $/# или $/#/$/#/.
-    """
 
     if not text:
         return text
@@ -90,8 +82,16 @@ def normalize_repeating_chars_advanced(text: str) -> str:
         #"ま●こ": "まんこ",
         "ま●こ": "pussy",
         "ま○こ": "pussy",
+        "ま☉こ": "pussy",
         #"ち●こ": "ちんこ",
-        "ち●こ": "dick",  
+        "ち●こ": "dick",
+        "ち○こ": "dick",
+        "ち☉こ": "dick",
+        "ち●ぽ": "dick",
+        "ち○ぽ": "dick",
+        "ち☉ぽ": "dick",
+        
+        "♥":"♡"
         # сюда можно добавлять новые слова
     }
     for censored, normal in censored_dict.items():
@@ -141,18 +141,10 @@ def post_process_translation(text: str) -> str:
     text = text.lstrip()
     
      # --- 3) Замена сердечек ♥ на ♡ ---
-    text = text.replace("♥", "♡")
+    text = re.sub(r"[♥❤](?:️)?", "♡", text)
 
     return text
-'''
-def get_raw_translation(blk_list: list[TextBlock]):
-    rw_translations_dict = {}
-    for idx, blk in enumerate(blk_list):
-        block_key = f"block_{idx}"
-        rw_translations_dict[block_key] = blk.translation
 
-    return json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
-'''
 def get_raw_translation(blk_list: list[TextBlock]) -> str:
     rw_translations_dict = {}
     for idx, blk in enumerate(blk_list):
