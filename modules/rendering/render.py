@@ -331,17 +331,18 @@ def pyside_word_wrap(
 # ============================================================
 
 def manual_wrap(
-    main_page,
-    blk_list: List[TextBlock],
-    font_family: str,
-    line_spacing,
-    outline_width,
-    bold,
-    italic,
-    underline,
-    alignment,
-    direction,
-    init_font_size: int = 40,
+    main_page, 
+    blk_list: List[TextBlock], 
+    image_path: str,
+    font_family: str, 
+    line_spacing: float, 
+    outline_width: float, 
+    bold: bool, 
+    italic: bool, 
+    underline: bool, 
+    alignment,#: Qt.AlignmentFlag, 
+    direction,#: Qt.LayoutDirection, 
+    init_font_size: int = 40, 
     min_font_size: int = 10
 ):
     target_lang = main_page.lang_mapping.get(main_page.t_combo.currentText(), None)
@@ -390,6 +391,7 @@ def manual_wrap(
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
 
         # 3️⃣ Рендерим текст уже в центрированном блоке
-        main_page.blk_rendered.emit(wrapped_text, font_size, blk)
+        main_page.blk_rendered.emit(wrapped_text, font_size, blk, image_path)
+
 
 
