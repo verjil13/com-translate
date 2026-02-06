@@ -118,7 +118,7 @@ def get_raw_text(blk_list: list[TextBlock]):
         rw_txts_dict[block_key] = text
 
     raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
-    #print(raw_texts_json)
+    print(raw_texts_json)
     return raw_texts_json
 
 
