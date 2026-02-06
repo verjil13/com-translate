@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import copy
 import numpy as np
 from typing import TYPE_CHECKING
@@ -48,14 +49,46 @@ class TextController:
         self._suspend_text_command = False
         self._is_updating_from_edit = False
 
-    def connect_text_item_signals(self, text_item: TextBlockItem):
+    def connect_text_item_signals(self, text_item: TextBlockItem, force_reconnect: bool = False):
+        if getattr(text_item, "_ct_signals_connected", False) and not force_reconnect:
+            return
+
+        if force_reconnect:
+            try:
+                text_item.item_selected.disconnect(self.on_text_item_selected)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                text_item.item_deselected.disconnect(self.on_text_item_deselected)
+            except (TypeError, RuntimeError):
+                pass
+            if hasattr(text_item, "_ct_text_changed_slot"):
+                try:
+                    text_item.text_changed.disconnect(text_item._ct_text_changed_slot)
+                except (TypeError, RuntimeError):
+                    pass
+            try:
+                text_item.text_highlighted.disconnect(self.set_values_from_highlight)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                text_item.change_undo.disconnect(self.main.rect_item_ctrl.rect_change_undo)
+            except (TypeError, RuntimeError):
+                pass
+
+        if not hasattr(text_item, "_ct_text_changed_slot"):
+            text_item._ct_text_changed_slot = (
+                lambda text, ti=text_item: self.update_text_block_from_item(ti, text)
+            )
+
         text_item.item_selected.connect(self.on_text_item_selected)
         text_item.item_deselected.connect(self.on_text_item_deselected)
-        text_item.text_changed.connect(lambda text, ti=text_item: self.update_text_block_from_item(ti, text))
+        text_item.text_changed.connect(text_item._ct_text_changed_slot)
         text_item.text_highlighted.connect(self.set_values_from_highlight)
         text_item.change_undo.connect(self.main.rect_item_ctrl.rect_change_undo)
         self._last_item_text[text_item] = text_item.toPlainText()
         self._last_item_html[text_item] = text_item.document().toHtml()
+        text_item._ct_signals_connected = True
 
     def clear_text_edits(self):
         self.main.curr_tblock = None
@@ -63,7 +96,14 @@ class TextController:
         self.main.s_text_edit.clear()
         self.main.t_text_edit.clear()
 
-    def on_blk_rendered(self, text: str, font_size: int, blk: TextBlock):
+    def on_blk_rendered(self, text: str, font_size: int, blk: TextBlock, image_path: str):
+        if not self.main.webtoon_mode:
+            if self.main.curr_img_idx < 0 or self.main.curr_img_idx >= len(self.main.image_files):
+                return
+            current_file = self.main.image_files[self.main.curr_img_idx]
+            if os.path.normcase(current_file) != os.path.normcase(image_path):
+                return
+
         if not self.main.image_viewer.hasPhoto():
             print("No main image to add to.")
             return

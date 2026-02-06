@@ -51,7 +51,8 @@ class ComicTranslate(ComicTranslateUI):
     patches_processed = QtCore.Signal(list, str)
     progress_update = QtCore.Signal(int, int, int, int, bool)
     image_skipped = QtCore.Signal(str, str, str)
-    blk_rendered = QtCore.Signal(str, int, object)
+    blk_rendered = QtCore.Signal(str, int, object, str)
+    render_state_ready = QtCore.Signal(str)
     download_event = QtCore.Signal(str, str)  # status, name
 
     def __init__(self, parent=None):
@@ -107,6 +108,7 @@ class ComicTranslate(ComicTranslateUI):
         self.patches_processed.connect(self.image_ctrl.on_inpaint_patches_processed)
         self.progress_update.connect(self.update_progress)
         self.blk_rendered.connect(self.text_ctrl.on_blk_rendered)
+        self.render_state_ready.connect(self.image_ctrl.on_render_state_ready)
         self.download_event.connect(self.on_download_event)
 
         self.connect_ui_elements()
@@ -235,7 +237,7 @@ class ComicTranslate(ComicTranslateUI):
             self.webtoon_toggle.setChecked(False)
         self.webtoon_mode = False
 
-    def connect_rect_item_signals(self, rect_item): return self.rect_item_ctrl.connect_rect_item_signals(rect_item)
+    def connect_rect_item_signals(self, rect_item, force_reconnect: bool = False): return self.rect_item_ctrl.connect_rect_item_signals(rect_item, force_reconnect=force_reconnect)
     def apply_inpaint_patches(self, patches): return self.image_ctrl.apply_inpaint_patches(patches)
     def render_settings(self): return self.text_ctrl.render_settings()
     def load_image(self, file_path: str) -> np.ndarray: return self.image_ctrl.load_image(file_path)

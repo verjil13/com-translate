@@ -366,13 +366,13 @@ class BatchProcessor:
             get_best_render_area(blk_list, image, inpaint_input_img)
 
             font = render_settings.font_family
-            font_color = QColor(render_settings.color)
+            setting_font_color = QColor(render_settings.color)
 
             max_font_size = render_settings.max_font_size
             min_font_size = render_settings.min_font_size
             line_spacing = float(render_settings.line_spacing) 
             outline_width = float(render_settings.outline_width)
-            outline_color = QColor(render_settings.outline_color) 
+            outline_color = QColor(render_settings.outline_color) if outline else None
             bold = render_settings.bold
             italic = render_settings.italic
             underline = render_settings.underline
@@ -410,14 +410,14 @@ class BatchProcessor:
                 
                 # Display text if on current page  
                 if image_path == file_on_display:
-                    self.main_page.blk_rendered.emit(translation, font_size, blk)
+                    self.main_page.blk_rendered.emit(translation, font_size, blk, image_path)
 
                 # Language-specific formatting for state storage
                 if is_no_space_lang(trg_lng_cd):
                     translation = translation.replace(' ', '')
 
                 # Smart Color Override
-                font_color = get_smart_text_color(blk.font_color, font_color)
+                font_color = get_smart_text_color(blk.font_color, setting_font_color)
 
                 # Use TextItemProperties for consistent text item creation
                 text_props = TextItemProperties(
@@ -465,6 +465,11 @@ class BatchProcessor:
             self.main_page.image_states[image_path].update({
                 'blk_list': blk_list                   
             })
+
+            # Notify UI that this page's render state is finalized.
+            # This enables a deterministic refresh when the user navigates to this page
+            # during processing and misses live blk_rendered events.
+            self.main_page.render_state_ready.emit(image_path)
 
             if image_path == file_on_display:
                 self.main_page.blk_list = blk_list
