@@ -8,6 +8,8 @@ from pythainlp.tokenize import word_tokenize
 from .textblock import TextBlock
 import imkit as imk
 import unicodedata
+from pathlib import Path
+from janome.tokenizer import Tokenizer
 
 MODEL_MAP = {
     "Custom": "",  
@@ -20,6 +22,76 @@ MODEL_MAP = {
     "Gemini-3.0-Flash": "gemini-3-flash-preview",
     "Gemini-2.5-Pro": "gemini-2.5-pro"
 }
+
+
+# --- кэш словарей и regex ---
+_SYMBOL_DICTS: dict[str, dict[str, str]] = {}
+_SYMBOL_REGEXES: dict[str, re.Pattern] = {}
+
+# --- токенизатор японского ---
+_JA_TOKENIZER = Tokenizer()
+
+# --------------------------
+# Загрузка словаря
+# --------------------------
+def load_symbol_dict(name: str) -> dict[str, str]:
+    if name in _SYMBOL_DICTS:
+        return _SYMBOL_DICTS[name]
+
+    path = Path(__file__).parent / f"{name}_symbols.json"
+    if not path.exists():
+        _SYMBOL_DICTS[name] = {}
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        _SYMBOL_DICTS[name] = json.load(f)
+
+    return _SYMBOL_DICTS[name]
+
+
+# --------------------------
+# Точная замена для цензуры
+# --------------------------
+def apply_censored_dict(text: str) -> str:
+    symbol_dict = load_symbol_dict("censored")
+    if not symbol_dict:
+        return text
+
+    # прямой перебор ключей → точное совпадение
+    for key, value in symbol_dict.items():
+        text = text.replace(key, value)
+    return text
+
+
+# --------------------------
+# Замена для звуков / эмоций (токены)
+# --------------------------
+def apply_sounds_dict(text: str) -> str:
+    symbol_dict = load_symbol_dict("sounds")
+    if not symbol_dict:
+        return text
+
+    # Токенизируем японский текст
+    tokens = _JA_TOKENIZER.tokenize(text)
+    
+    result_parts = []
+    
+    for token in tokens:
+        surface = token.surface
+        
+        # Если это пунктуация/разделитель из игнора — оставляем как есть
+        if surface in IGNORE_TOKENS:
+            result_parts.append(surface)
+            continue
+            
+        # Если токен точно совпадает с ключом в словаре — заменяем
+        if surface in symbol_dict:
+            result_parts.append(symbol_dict[surface])
+        else:
+            # иначе оставляем оригинальный токен
+            result_parts.append(surface)
+    
+    return "".join(result_parts)
 
 def encode_image_array(img_array: np.ndarray):
     img_bytes = imk.encode_image(img_array, ".png")
@@ -77,26 +149,18 @@ def normalize_repeating_chars_advanced(text: str) -> str:
     pattern = r"(.)\1{3,}"
     text = re.sub(pattern, lambda m: m.group(1) * 3, text)   
 
-    # --- 5) Заменяем цензурированные слова по словарю ---
-    censored_dict = {
-        #"ま●こ": "まんこ",
-        "ま●こ": "pussy",
-        "ま○こ": "pussy",
-        "ま☉こ": "pussy",
-        #"ち●こ": "ちんこ",
-        "ち●こ": "dick",
-        "ち○こ": "dick",
-        "ち☉こ": "dick",
-        "ち●ぽ": "dick",
-        "ち○ぽ": "dick",
-        "ち☉ぽ": "dick",
-        
-        "♥":"♡"
-        # сюда можно добавлять новые слова
-    }
-    for censored, normal in censored_dict.items():
-        text = text.replace(censored, normal)    
+    # 5) цензура — ПЕРВОЙ
+    text = apply_censored_dict(text)
 
+    # 6) звуки / эмоции — ПОСЛЕ
+    #text = apply_sounds_dict(text)
+    #print("normalize")
+    #print(text)
+   
+       
+
+    # --- 6) Заменяем звуки / эмоции ---
+    
     
     return text
 
@@ -110,7 +174,7 @@ def get_raw_text(blk_list: list[TextBlock]):
         rw_txts_dict[block_key] = text
 
     raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
-    #print(raw_texts_json)
+    print(raw_texts_json)
     return raw_texts_json
 
 
