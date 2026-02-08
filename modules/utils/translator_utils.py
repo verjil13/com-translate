@@ -63,36 +63,6 @@ def apply_censored_dict(text: str) -> str:
     return text
 
 
-# --------------------------
-# Замена для звуков / эмоций (токены)
-# --------------------------
-def apply_sounds_dict(text: str) -> str:
-    symbol_dict = load_symbol_dict("sounds")
-    if not symbol_dict:
-        return text
-
-    # Токенизируем японский текст
-    tokens = _JA_TOKENIZER.tokenize(text)
-    
-    result_parts = []
-    
-    for token in tokens:
-        surface = token.surface
-        
-        # Если это пунктуация/разделитель из игнора — оставляем как есть
-        if surface in IGNORE_TOKENS:
-            result_parts.append(surface)
-            continue
-            
-        # Если токен точно совпадает с ключом в словаре — заменяем
-        if surface in symbol_dict:
-            result_parts.append(symbol_dict[surface])
-        else:
-            # иначе оставляем оригинальный токен
-            result_parts.append(surface)
-    
-    return "".join(result_parts)
-
 def encode_image_array(img_array: np.ndarray):
     img_bytes = imk.encode_image(img_array, ".png")
     return base64.b64encode(img_bytes).decode('utf-8')
@@ -150,17 +120,7 @@ def normalize_repeating_chars_advanced(text: str) -> str:
     text = re.sub(pattern, lambda m: m.group(1) * 3, text)   
 
     # 5) цензура — ПЕРВОЙ
-    text = apply_censored_dict(text)
-
-    # 6) звуки / эмоции — ПОСЛЕ
-    #text = apply_sounds_dict(text)
-    #print("normalize")
-    #print(text)
-   
-       
-
-    # --- 6) Заменяем звуки / эмоции ---
-    
+    text = apply_censored_dict(text)    
     
     return text
 
