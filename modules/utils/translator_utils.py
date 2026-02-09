@@ -8,6 +8,7 @@ from pythainlp.tokenize import word_tokenize
 from .textblock import TextBlock
 import imkit as imk
 import unicodedata
+from pathlib import Path
 
 MODEL_MAP = {
     "Custom": "",  
@@ -20,6 +21,42 @@ MODEL_MAP = {
     "Gemini-2.5-Flash": "gemini-2.5-flash",
     "Gemini-2.5-Pro": "gemini-2.5-pro"
 }
+
+# --- кэш словарей и regex ---
+_SYMBOL_DICTS: dict[str, dict[str, str]] = {}
+_SYMBOL_REGEXES: dict[str, re.Pattern] = {}
+
+
+# --------------------------
+# Загрузка словаря
+# --------------------------
+def load_symbol_dict(name: str) -> dict[str, str]:
+    if name in _SYMBOL_DICTS:
+        return _SYMBOL_DICTS[name]
+
+    path = Path(__file__).parent / f"{name}_symbols.json"
+    if not path.exists():
+        _SYMBOL_DICTS[name] = {}
+        return {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        _SYMBOL_DICTS[name] = json.load(f)
+
+    return _SYMBOL_DICTS[name]
+
+
+# --------------------------
+# Точная замена для цензуры
+# --------------------------
+def apply_censored_dict(text: str) -> str:
+    symbol_dict = load_symbol_dict("censored")
+    if not symbol_dict:
+        return text
+
+    # прямой перебор ключей → точное совпадение
+    for key, value in symbol_dict.items():
+        text = text.replace(key, value)
+    return text
 
 def encode_image_array(img_array: np.ndarray):
     img_bytes = imk.encode_image(img_array, ".png")
@@ -44,21 +81,13 @@ def apply_translations_to_blocks(blk_list: list[TextBlock], translations: dict[i
 
 
 def normalize_repeating_chars_advanced(text: str) -> str:
-    """
-    Расширенная нормализация повторяющихся символов:
-
-    1) Для символов типа ~ оставляем 1 повтор.
-    2) Для символов типа あ оставляем 2 повтора.
-    3) Для всех остальных символов оставляем максимум 3 повторов.
-    4) Удаляем полностью конструкции, например $/# или $/#/$/#/.
-    """
 
     if not text:
         return text
         
     # --- 0) Удаление мусора в начале строки ---
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
         '',
         text
     )    
@@ -85,26 +114,8 @@ def normalize_repeating_chars_advanced(text: str) -> str:
     pattern = r"(.)\1{3,}"
     text = re.sub(pattern, lambda m: m.group(1) * 3, text)   
 
-    # --- 5) Заменяем цензурированные слова по словарю ---
-    censored_dict = {
-        #"ま●こ": "まんこ",
-        "ま●こ": "pussy",
-        "ま○こ": "pussy",
-        "ま☉こ": "pussy",
-        #"ち●こ": "ちんこ",
-        "ち●こ": "dick",
-        "ち○こ": "dick",
-        "ち☉こ": "dick",
-        "ち●ぽ": "dick",
-        "ち○ぽ": "dick",
-        "ち☉ぽ": "dick",
-        
-        "♥":"♡"
-        # сюда можно добавлять новые слова
-    }
-    for censored, normal in censored_dict.items():
-        text = text.replace(censored, normal)    
-
+    # 5) цензура — ПЕРВОЙ
+    text = apply_censored_dict(text)    
     
     return text
 
@@ -125,42 +136,23 @@ def get_raw_text(blk_list: list[TextBlock]):
 def post_process_translation(text: str) -> str:
     if not text:
         return text
-    
+
+    # 0) Удаляем шум в начале строки
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。~]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
         '',
         text
-    )    
+    )
 
-    # --- 1) Ограничение повторов всех символов до 3 ---
+    # 1) Ограничение повторов всех символов до 3
     text = re.sub(r"(.)\1{3,}", lambda m: m.group(1) * 3, text)
 
-    # --- 2) Удаление шумных символов в начале предложения ---
-    # Шумные символы, которые могут встречаться в начале:
-    noisy_start_patterns = [
-        r"^[!！?？．…。~]+",  # любые комбинации знаков ! ? . … ~ в начале
-        r"^[。、]{1,3}",      # японские и китайские точки/запятые в начале
-    ]
-
-    for pat in noisy_start_patterns:
-        text = re.sub(pat, "", text)
-
-    # Убираем пробелы слева после удаления
-    text = text.lstrip()
-    
-     # --- 3) Замена сердечек ♥ на ♡ ---
+    # 2) Замена сердечек ♥ ❤ на ♡
     text = re.sub(r"[♥❤](?:️)?", "♡", text)
 
     return text
-'''
-def get_raw_translation(blk_list: list[TextBlock]):
-    rw_translations_dict = {}
-    for idx, blk in enumerate(blk_list):
-        block_key = f"block_{idx}"
-        rw_translations_dict[block_key] = blk.translation
-
-    return json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
-'''
+    
+    
 def get_raw_translation(blk_list: list[TextBlock]) -> str:
     rw_translations_dict = {}
     for idx, blk in enumerate(blk_list):
