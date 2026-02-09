@@ -2,14 +2,13 @@ import base64
 import json
 import re
 import jieba
-import janome.tokenizer
 import numpy as np
 from pythainlp.tokenize import word_tokenize
 from .textblock import TextBlock
 import imkit as imk
 import unicodedata
 from pathlib import Path
-from janome.tokenizer import Tokenizer
+
 
 MODEL_MAP = {
     "Custom": "",  
@@ -28,8 +27,6 @@ MODEL_MAP = {
 _SYMBOL_DICTS: dict[str, dict[str, str]] = {}
 _SYMBOL_REGEXES: dict[str, re.Pattern] = {}
 
-# --- токенизатор японского ---
-_JA_TOKENIZER = Tokenizer()
 
 # --------------------------
 # Загрузка словаря
@@ -92,7 +89,7 @@ def normalize_repeating_chars_advanced(text: str) -> str:
         
     # --- 0) Удаление мусора в начале строки ---
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
         '',
         text
     )    
@@ -141,30 +138,18 @@ def get_raw_text(blk_list: list[TextBlock]):
 def post_process_translation(text: str) -> str:
     if not text:
         return text
-    
+
+    # 0) Удаляем шум в начале строки
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。~]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
         '',
         text
-    )    
+    )
 
-    # --- 1) Ограничение повторов всех символов до 3 ---
+    # 1) Ограничение повторов всех символов до 3
     text = re.sub(r"(.)\1{3,}", lambda m: m.group(1) * 3, text)
 
-    # --- 2) Удаление шумных символов в начале предложения ---
-    # Шумные символы, которые могут встречаться в начале:
-    noisy_start_patterns = [
-        r"^[!！?？．…。~]+",  # любые комбинации знаков ! ? . … ~ в начале
-        r"^[。、]{1,3}",      # японские и китайские точки/запятые в начале
-    ]
-
-    for pat in noisy_start_patterns:
-        text = re.sub(pat, "", text)
-
-    # Убираем пробелы слева после удаления
-    text = text.lstrip()
-    
-     # --- 3) Замена сердечек ♥ на ♡ ---
+    # 2) Замена сердечек ♥ ❤ на ♡
     text = re.sub(r"[♥❤](?:️)?", "♡", text)
 
     return text
