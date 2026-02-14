@@ -25,11 +25,8 @@ MODEL_MAP = {
 
 # --- кэш словарей и regex ---
 _SYMBOL_DICTS: dict[str, dict[str, str]] = {}
-_CENSOR_PATTERN = re.compile(r"[●○◯☉〇•]+")
+_SYMBOL_REGEXES: dict[str, re.Pattern] = {}
 
-def normalize_censored(text: str) -> str:
-    # заменяем любой символ цензуры на стандартный ●
-    return _CENSOR_PATTERN.sub("●", text)
 
 # --------------------------
 # Загрузка словаря
@@ -57,8 +54,6 @@ def apply_censored_dict(text: str) -> str:
     if not symbol_dict:
         return text
 
-    text = normalize_censored(text)
-    
     # прямой перебор ключей → точное совпадение
     for key, value in symbol_dict.items():
         text = text.replace(key, value)
