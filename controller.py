@@ -44,7 +44,7 @@ from app.controllers.projects import ProjectController
 from app.controllers.text import TextController
 from app.controllers.webtoons import WebtoonController
 from app.controllers.search_replace import SearchReplaceController
-from modules.utils.exceptions import InsufficientCreditsException
+from modules.utils.exceptions import InsufficientCreditsException, ContentFlaggedException
 from collections import deque
 
 # Любая буква любого языка (Unicode category: Letter)
@@ -513,6 +513,12 @@ class ComicTranslate(ComicTranslateUI):
         # Handle specific exceptions
         if exctype is InsufficientCreditsException:
             Messages.show_insufficient_credits_error(self, details=str(value))
+            
+        elif exctype is ContentFlaggedException:
+            err_msg = str(value)
+            reason = err_msg.split(": ")[-1] if ": " in err_msg else err_msg
+            context = getattr(value, 'context', 'Operation')
+            Messages.show_content_flagged_error(self, details=f"Reason: {reason}", context=context)
         
         # Handle HTTP Errors (Server-side)
         elif issubclass(exctype, requests.exceptions.HTTPError):
@@ -535,7 +541,20 @@ class ComicTranslate(ComicTranslateUI):
                         
                 # Server Errors (5xx)
                 if 500 <= status_code < 600:
-                    Messages.show_server_error(self, status_code)
+                    # Try to determine context from error type for better messaging
+                    context = None
+                    try:
+                        detail = response.json().get('detail', {})
+                        if isinstance(detail, dict):
+                            err_type = detail.get('type', '')
+                            if 'OCR' in err_type:
+                                context = 'ocr'
+                            elif 'TRANSLAT' in err_type:
+                                context = 'translation'
+                    except Exception:
+                        pass
+                    
+                    Messages.show_server_error(self, status_code, context)
                     self.loading.setVisible(False)
                     self.enable_hbutton_group()
                     return
@@ -565,6 +584,7 @@ class ComicTranslate(ComicTranslateUI):
             if not validate_settings(self, target_lang):
                 return
 
+        self.image_ctrl.clear_page_skip_errors_for_paths(self.image_files)
         self._batch_active = True
         self._batch_cancel_requested = False
         self.translate_button.setEnabled(False)
@@ -592,6 +612,7 @@ class ComicTranslate(ComicTranslateUI):
             if not validate_settings(self, tgt):
                 return
             
+        self.image_ctrl.clear_page_skip_errors_for_paths(selected_paths)
         self.selected_batch = selected_paths
 
         # disable UI & run
