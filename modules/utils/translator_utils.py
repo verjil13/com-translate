@@ -154,8 +154,8 @@ def post_process_translation(text: str) -> str:
     # 1) Ограничение повторов всех символов до 3
     text = re.sub(r"(.)\1{3,}", lambda m: m.group(1) * 3, text)
 
-    # 2) Замена сердечек ♥ ❤ на ♡
-    text = re.sub(r"[♥❤](?:️)?", "♡", text)
+    # 2) Замена сердечек ♥  на ♡
+    text = re.sub(r"[♥](?:️)?", "♡", text)
 
     return text
 
