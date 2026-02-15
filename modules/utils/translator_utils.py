@@ -24,8 +24,11 @@ MODEL_MAP = {
 
 # --- кэш словарей и regex ---
 _SYMBOL_DICTS: dict[str, dict[str, str]] = {}
-_SYMBOL_REGEXES: dict[str, re.Pattern] = {}
+_CENSOR_PATTERN = re.compile(r"[●○◯☉〇•]+")
 
+def normalize_censored(text: str) -> str:
+    # заменяем любой символ цензуры на стандартный ●
+    return _CENSOR_PATTERN.sub("●", text)
 
 # --------------------------
 # Загрузка словаря
@@ -53,6 +56,8 @@ def apply_censored_dict(text: str) -> str:
     if not symbol_dict:
         return text
 
+    text = normalize_censored(text)
+    
     # прямой перебор ключей → точное совпадение
     for key, value in symbol_dict.items():
         text = text.replace(key, value)
@@ -164,9 +169,110 @@ def get_raw_translation(blk_list: list[TextBlock]) -> str:
 
     return json.dumps(rw_translations_dict, ensure_ascii=False, indent=4)
 
-def fix_llm_block_commas(s: str) -> str:
-    s = re.sub(r'"\.\s*(?=\n\s*"block_\d+")', r'",', s)
-    s = re.sub(r'("block_\d+"\s*:\s*"[^"]*")\s*\n\s*(?="block_\d+")', r'\1,\n', s)
+def fix_llm_json_structure(s: str) -> str:
+    if not s:
+        return s
+
+    # --- 1. Убираем лишние внешние кавычки (если LLM вернул строку как текст) ---
+    s = s.strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1]
+
+    # --- 2. Нормализуем экранированные переводы строк ---
+    # \\r\\n -> \\n
+    s = s.replace("\\r\\n", "\\n")
+
+    # Иногда LLM даёт реальные переносы вместо \n — переводим их в \n
+    s = s.replace("\r\n", "\n")
+
+    # --- 3. Исправляем "голый" n вместо \n (например: ", n    "block_1") ---
+    s = re.sub(
+        r'([",}\]])\s*n(\s*"block_\d+"\s*:)',
+        r'\1\\n\2',
+        s
+    )
+
+    # Также если просто n\n или n "block"
+    s = re.sub(
+        r'\bn(\s*"block_\d+"\s*:)',
+        r'\\n\1',
+        s
+    )
+
+    # --- 4. Гарантируем кавычки у ключей block_N ---
+    # block_0: -> "block_0":
+    s = re.sub(r'(?<!")\b(block_\d+)\b\s*:', r'"\1":', s)
+
+    # --- 5. Нормализуем реальные переносы строк между блоками в \n ---
+    # "text"
+    # "block_1": -> "text"\n"block_1":
+    s = re.sub(
+        r'(")\s*\n\s*(?="block_\d+"\s*:)',
+        r'\1\\n',
+        s
+    )
+
+    # --- 6. Исправляем . \n ; \n : \n вместо ,\n между блоками ---
+    # "1". \n "block_1":  ->  "1",\n "block_1":
+    s = re.sub(
+        r'"\s*[.;:]\s*(\\n|\n)\s*(?="block_\d+"\s*:)',
+        r'",\\n',
+        s
+    )
+
+    # --- 7. Если вообще нет разделителя между полями ---
+    # "text"\n"block_1": -> "text",\n"block_1":
+    s = re.sub(
+        r'(")\s*(\\n|\n)\s*(?="block_\d+"\s*:)',
+        r'",\\n',
+        s
+    )
+
+    # --- 8. Если LLM вставил пробелы без \n ---
+    # "text"    "block_2": -> "text",\n    "block_2":
+    s = re.sub(
+        r'(")\s+(?="block_\d+"\s*:)',
+        r'",\\n',
+        s
+    )
+
+    # --- 9. Чиним случай: "text"\nblock_1: (ключ без кавычек + без запятой) ---
+    s = re.sub(
+        r'(")\s*(\\n|\n)\s*(block_\d+\s*:)',
+        r'",\\n"\3',
+        s
+    )
+
+    # --- 10. Исправляем случай с лишними запятыми перед новым блоком ---
+    # ",\n,"block_1" -> ",\n"block_1"
+    s = re.sub(
+        r',\s*(\\n)\s*,\s*(?="block_\d+")',
+        r',\1',
+        s
+    )
+
+    # --- 11. Убираем запятую перед последним блоком (перед }) ---
+    # ,\n}
+    s = re.sub(r',\s*(\\n)\s*}', r'\1}', s)
+    s = re.sub(r',\s*}', r'}', s)
+
+    # --- 12. Чиним незакрытые кавычки в значениях (частый LLM баг) ---
+    # Если строка оборвалась: "block_1": "текст
+    s = re.sub(
+        r'("block_\d+"\s*:\s*"[^"\n]*)(\n|\\n)',
+        r'\1"\2',
+        s
+    )
+
+    # --- 13. Финальная проверка парности кавычек ---
+    quote_count = s.count('"')
+    if quote_count % 2 != 0:
+        # Мягкая починка: закрываем последнюю строку значений
+        if s.rstrip().endswith("}"):
+            s = s.rstrip()[:-1] + '"}'
+        else:
+            s += '"'
+
     return s
 
 
@@ -182,6 +288,7 @@ def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
         else:
             raise json.JSONDecodeError("No JSON object", json_string, 0)
 
+        raw_json = fix_llm_json_structure(raw_json) #проверка структуры
         translation_dict = json.loads(raw_json)
         for idx, blk in enumerate(blk_list):
             key = f"block_{idx}"
