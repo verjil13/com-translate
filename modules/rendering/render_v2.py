@@ -199,32 +199,35 @@ def get_best_render_area(
 # ============================================================
 # PYSIDE WORD WRAP (исправленный)
 # ============================================================
-
 def pyside_word_wrap(
     text: str,
     font_input: str,
     roi_width: int,
     roi_height: int,
     line_spacing=1.0,
-    outline_width=0,
+    outline_width=0,   # новый
     bold=False,
     italic=False,
     underline=False,
-    alignment=Qt.AlignLeft,
-    direction=Qt.LeftToRight,
+    alignment=Qt.AlignLeft,  # новый
+    direction=Qt.LeftToRight,  # новый
     max_font_size: int = 40,
     min_font_size: int = 10,
-    vertical: bool = False,
-    width_coef: float = 1.3, # коэффициент по высоте ширине 1.25
-    height_coef: float = 1.1,  # коэффициент по высоте 1.05
+    vertical: bool = False,    # новый
+    width_coef: float = 1.3,
+    height_coef: float = 1.1,
 ) -> tuple[str, int]:
+    
+  
+    
     """
-    Авто-перенос текста с подбором шрифта по ширине И ВЫСОТЕ блока.
+    Авто-перенос текста с подбором шрифта по ширине и высоте блока.
 
-    Новое:
-    - Учитывается roi_height
-    - adjusted_height = roi_height * height_coef
-    - Если текст не помещается по высоте — шрифт уменьшается
+    Правила переноса слов:
+    - Левый кусок ≥ ширины "WWW"
+    - Хвост ≥ ширины "WW"
+    - Левый ≥ правого
+    - Дефис добавляется только визуально
     """
 
     from PySide6.QtGui import QFont, QFontMetrics
@@ -236,11 +239,9 @@ def pyside_word_wrap(
     if not text:
         return "", min_font_size
 
-    # --- коэффициенты удобства ---
     adjusted_width = roi_width * width_coef
     adjusted_height = roi_height * height_coef
 
-    # --- подготовка шрифта ---
     def prepare_font(size: int) -> QFont:
         f = QFont(font_input.strip() or "Arial", size)
         f.setBold(bold)
@@ -248,135 +249,89 @@ def pyside_word_wrap(
         f.setUnderline(underline)
         return f
 
-    # --- расчёт реальной высоты текста ---
-    def get_text_height(metrics: QFontMetrics, wrapped: str) -> int:
-        lines = wrapped.split("\n")
-        if not lines:
-            return 0
-        # учитываем межстрочный интервал
-        line_h = metrics.height()
-        return int(line_h * len(lines) * line_spacing)
-
-    # --- функция wrap текста ---
     def wrap_text(src: str, font: QFont) -> tuple[str, bool]:
         metrics = QFontMetrics(font)
-        lines: list[str] = []
-        current_line = ""
+        lines = []
         has_hyphen = False
-    
-        # --- анти-уродливые переносы (В ПИКСЕЛЯХ, не в символах) ---
-        MIN_LEFT_WIDTH_COEF = 1.5   # минимальная ширина левой части (в ширинах символа)
-        MIN_RIGHT_WIDTH_COEF = 2.0  # минимальная ширина хвоста (в ширинах символа)
-    
+
+        min_left_px = metrics.horizontalAdvance("WWW")
+        min_tail_px = metrics.horizontalAdvance("WW")
+
         for word in src.split():
+            if not lines:
+                current_line = ""
+            else:
+                current_line = lines.pop()  # последняя строка
+
             space = " " if current_line else ""
             test_line = current_line + space + word
-    
-            # 1️⃣ Слово помещается в текущую строку
+
+            # Слово помещается целиком
             if metrics.horizontalAdvance(test_line) <= adjusted_width:
-                current_line = test_line
+                lines.append(test_line)
                 continue
-    
-            # 2️⃣ Перенос по пробелу (идеальный случай)
+
+            # Перенос по пробелу (новая строка)
             if current_line:
                 lines.append(current_line)
                 current_line = ""
-    
-            # 3️⃣ Слово целиком помещается на новой строке
+
+            # Слово помещается целиком на новой строке
             if metrics.horizontalAdvance(word) <= adjusted_width:
-                current_line = word
+                lines.append(word)
                 continue
-    
-            # 4️⃣ Слово слишком длинное — умный перенос по частям
-            has_hyphen = True
+
+            # Слово слишком длинное — делим на куски
             remaining = word
-    
-            # базовая метрика — ширина "среднего" символа
-            avg_char_width = max(1, metrics.horizontalAdvance("W"))#n
-            min_left_width = avg_char_width * MIN_LEFT_WIDTH_COEF
-            min_right_width = avg_char_width * MIN_RIGHT_WIDTH_COEF
-    
             while remaining:
-                best_i = 0
-                best_candidate = ""
-    
-                # Ищем САМЫЙ длинный кусок, который:
-                # - влезает по ширине
-                # - не создает микроскопический левый кусок
-                # - не создает уродливый хвост
-                for i in range(len(remaining), 0, -1):
-                    left = remaining[:i]
-                    is_split = i < len(remaining)
-                    candidate = left + ("-" if is_split else "")
-    
-                    # Проверка ширины
-                    if metrics.horizontalAdvance(candidate) > adjusted_width:
-                        continue
-    
-                    if is_split:
-                        left_width = metrics.horizontalAdvance(left)
-                        right = remaining[i:]
-                        right_width = metrics.horizontalAdvance(right)
-    
-                        # ❌ запрет: "с-"
-                        if left_width < min_left_width:
-                            continue
-    
-                        # ❌ запрет: "…\nr"
-                        if right_width < min_right_width:
-                            continue
-    
-                    best_i = i
-                    best_candidate = candidate
+                # если остаток помещается целиком
+                if metrics.horizontalAdvance(remaining) <= adjusted_width:
+                    lines.append(remaining)
                     break
-    
-                # fallback: если нормальный перенос невозможен (очень узкий бокс)
-                if best_i == 0:
-                    for i in range(len(remaining), 0, -1):
-                        left = remaining[:i]
-                        candidate = left + ("-" if i < len(remaining) else "")
-                        if metrics.horizontalAdvance(candidate) <= adjusted_width:
-                            best_i = i
-                            best_candidate = candidate
-                            break
-    
-                    # крайний случай — влезает только 1 символ
-                    if best_i == 0:
-                        best_i = 1
-                        best_candidate = remaining[:1] + ("-" if len(remaining) > 1 else "")
-    
-                lines.append(best_candidate)
-                remaining = remaining[best_i:]
-    
-        if current_line:
-            lines.append(current_line)
-    
+
+                # ищем разрез по правилам
+                left_index = len(remaining) // 2
+                if len(remaining) % 2 != 0:
+                    left_index += 1
+
+                left = remaining[:left_index]
+                right = remaining[left_index:]
+
+                # корректируем, чтобы левый кусок ≥ правого
+                while metrics.horizontalAdvance(left) < metrics.horizontalAdvance(right) and left_index < len(remaining) - 1:
+                    left_index += 1
+                    left = remaining[:left_index]
+                    right = remaining[left_index:]
+
+                # проверяем минимальные размеры
+                left_px = metrics.horizontalAdvance(left)
+                right_px = metrics.horizontalAdvance(right)
+
+                if left_px < min_left_px or right_px < min_tail_px:
+                    # нельзя резать — берём весь остаток
+                    lines.append(remaining)
+                    break
+
+                # добавляем дефис визуально
+                lines.append(left + "-")
+                has_hyphen = True
+                remaining = right
+
         return "\n".join(lines), has_hyphen
 
-    # --- подбор размера: теперь по ширине И высоте ---
+    # --- подбор размера шрифта ---
     for size in range(max_font_size, min_font_size - 1, -1):
         font_for_measure = prepare_font(size)
-        metrics = QFontMetrics(font_for_measure)
-
         wrapped_text, has_hyphen = wrap_text(text, font_for_measure)
 
-        # вычисляем итоговую высоту текста
-        text_height = get_text_height(metrics, wrapped_text)
+        metrics = QFontMetrics(font_for_measure)
+        text_height = int(metrics.height() * len(wrapped_text.split("\n")) * line_spacing)
+        text_width = max(metrics.horizontalAdvance(line) for line in wrapped_text.split("\n"))
 
-        # ❗ НОВОЕ: проверка переполнения по высоте
-        if text_height > adjusted_height:
-            continue  # уменьшаем шрифт
-
-        # если влез по высоте и не было переноса части слова — идеально
-        if not has_hyphen:
+        if text_height <= adjusted_height and text_width <= adjusted_width:
             return wrapped_text, size
 
-        # если был перенос части слова, но всё влезает по высоте —
-        # всё равно допускаем (лучше чем переполнение)
-        if text_height <= adjusted_height:
-            return wrapped_text, size
-
-    # --- fallback: минимальный размер ---
+    # fallback: минимальный размер
     font_for_measure = prepare_font(min_font_size)
     wrapped_text, _ = wrap_text(text, font_for_measure)
     return wrapped_text, min_font_size
