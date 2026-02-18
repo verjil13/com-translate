@@ -155,20 +155,20 @@ class Messages:
             context: optional context ('translation', 'ocr', or None for generic)
         """
         messages = {
-            500: QCoreApplication.translate("Messages", "An unexpected error occurred on the server.\nPlease try again later."),
-            502: QCoreApplication.translate("Messages", "The server received an invalid response from an upstream provider.\nPlease try again later."),
-            503: QCoreApplication.translate("Messages", "The server is currently unavailable or overloaded.\nPlease try again later."),
-            504: QCoreApplication.translate("Messages", "The server timed out waiting for a response.\nPlease try again later."),
+            500: QCoreApplication.translate("Messages", "We encountered an unexpected server error.\nPlease try again in a few moments."),
+            502: QCoreApplication.translate("Messages", "The external service provider is having trouble.\nPlease try again later."),
+            503: QCoreApplication.translate("Messages", "The server is currently busy or under maintenance.\nPlease try again shortly."),
+            504: QCoreApplication.translate("Messages", "The server took too long to respond.\nPlease check your connection or try again later."),
         }
         
         # Context-aware 501 message
         if status_code == 501:
             if context == 'ocr':
-                text = QCoreApplication.translate("Messages", "The selected text recognition tool is currently unavailable.\nPlease select a different tool in Settings.")
+                text = QCoreApplication.translate("Messages", "The selected text recognition tool is not supported.\nPlease select a different tool in Settings.")
             elif context == 'translation':
-                text = QCoreApplication.translate("Messages", "The selected translator is currently unavailable.\nPlease select a different tool in Settings.")
+                text = QCoreApplication.translate("Messages", "The selected translator is not supported.\nPlease select a different tool in Settings.")
             else:
-                text = QCoreApplication.translate("Messages", "The selected tool is currently unavailable.\nPlease select a different tool in Settings.")
+                text = QCoreApplication.translate("Messages", "The selected tool is not supported.\nPlease select a different tool in Settings.")
         else:
             text = messages.get(status_code, messages[500])
         
@@ -200,20 +200,22 @@ class Messages:
         Build the standardized content-flagged error text.
         """
         if context == "OCR":
-            action_msg = "Text Recognition blocked"
-            suggestion = "Please try using a different Text Recognition tool."
+            msg = QCoreApplication.translate(
+                "Messages",
+                "Text Recognition blocked: The AI provider flagged this content.\nPlease try a different Text Recognition tool."
+            )
         elif context in ("Translator", "Translation"):
-            action_msg = "Translation blocked"
-            suggestion = "Please try using a different translator."
+            msg = QCoreApplication.translate(
+                "Messages",
+                "Translation blocked: The AI provider flagged this content.\nPlease try a different translator."
+            )
         else:
-            action_msg = "Operation blocked"
-            suggestion = "Please try using a different tool."
-
-        base_msg = QCoreApplication.translate(
-            "Messages", 
-            "{0}: The content was flagged by the AI provider's safety filters.\n{1}"
-        ).format(action_msg, suggestion)
-        return f"{base_msg}\n{details}" if details else base_msg
+            msg = QCoreApplication.translate(
+                "Messages",
+                "Operation blocked: The AI provider flagged this content.\nPlease try a different tool."
+            )
+        
+        return msg
 
     @staticmethod
     def show_content_flagged_error(parent, details: str = None, context: str = "Operation", duration=None, closable=True):
@@ -226,5 +228,21 @@ class Messages:
             parent=parent,
             duration=duration,
             closable=closable
+        )
+
+    @staticmethod
+    def show_batch_skipped_summary(parent, skipped_count: int):
+        """
+        Show a persistent summary when a batch finished with skipped images.
+        """
+        text = QCoreApplication.translate(
+            "Messages",
+            "{0} image(s) were skipped in this batch.\nOpen Batch Report to see all skipped images and reasons."
+        ).format(skipped_count)
+        return MMessage.warning(
+            text=text,
+            parent=parent,
+            duration=None,
+            closable=True
         )
 

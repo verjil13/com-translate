@@ -52,9 +52,25 @@ class ImageStateController:
             return MMessage.InfoType
         return MMessage.WarningType
 
+    def _summarize_skip_error(self, error: str) -> str:
+        if not error:
+            return ""
+        for raw_line in error.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.lower().startswith("traceback"):
+                break
+            if line.startswith('File "') or line.startswith("File '"):
+                continue
+            if line.startswith("During handling of the above exception"):
+                continue
+            return line
+        return ""
+
     def _build_skip_message(self, image_path: str, skip_reason: str, error: str) -> str:
         file_name = os.path.basename(image_path)
-        reason = error.strip() if (error and error.strip()) else ""
+        reason = self._summarize_skip_error(error)
         t = QtCore.QCoreApplication.translate
 
         message_map = {
@@ -151,6 +167,17 @@ class ImageStateController:
         )
         self._active_page_error_message = message
         self._active_page_error_path = file_path
+
+    def handle_webtoon_page_focus(self, file_path: str, explicit_navigation: bool):
+        """Apply page-skip popup policy for webtoon navigation.
+
+        explicit_navigation=True means deliberate jump (page list/report),
+        False means passive scroll-driven page change.
+        """
+        if explicit_navigation:
+            self._show_page_skip_error_for_file(file_path)
+        else:
+            self._hide_active_page_skip_error()
 
     def _clear_page_skip_error(self, file_path: str):
         self._page_skip_errors.pop(file_path, None)
@@ -366,6 +393,7 @@ class ImageStateController:
         for index, file_path in enumerate(self.main.image_files):
             file_name = os.path.basename(file_path)
             list_item = QtWidgets.QListWidgetItem(file_name)
+            list_item.setData(QtCore.Qt.ItemDataRole.UserRole, file_path)
             card = ClickMeta(extra=False, avatar_size=(35, 50))
             card.setup_data({
                 "title": file_name,
@@ -385,13 +413,103 @@ class ImageStateController:
         # Initialize lazy loading for the new cards
         self.page_list_loader.set_file_paths(self.main.image_files, self.main.image_cards)
 
+    def _resolve_reordered_paths(self, ordered_items: list[str]) -> list[str] | None:
+        current_files = self.main.image_files
+        if len(ordered_items) != len(current_files):
+            return None
+
+        current_set = set(current_files)
+        name_to_paths: dict[str, list[str]] = {}
+        for path in current_files:
+            name_to_paths.setdefault(os.path.basename(path), []).append(path)
+
+        resolved: list[str] = []
+        used: set[str] = set()
+
+        for token in ordered_items:
+            chosen = None
+
+            if token in current_set and token not in used:
+                chosen = token
+            else:
+                candidates = name_to_paths.get(token, [])
+                while candidates and candidates[0] in used:
+                    candidates.pop(0)
+                if candidates:
+                    chosen = candidates.pop(0)
+
+            if not chosen:
+                return None
+
+            used.add(chosen)
+            resolved.append(chosen)
+
+            chosen_name = os.path.basename(chosen)
+            remaining = name_to_paths.get(chosen_name, [])
+            if chosen in remaining:
+                remaining.remove(chosen)
+
+        if set(resolved) != current_set:
+            return None
+        return resolved
+
+    def handle_image_reorder(self, ordered_items: list[str]):
+        if not self.main.image_files:
+            return
+
+        new_order = self._resolve_reordered_paths(ordered_items)
+        if not new_order or new_order == self.main.image_files:
+            return
+
+        current_file = self._current_file_path()
+        if current_file:
+            self.save_current_image_state()
+
+        self.main.image_files = new_order
+
+        if current_file in self.main.image_files:
+            self.main.curr_img_idx = self.main.image_files.index(current_file)
+        elif self.main.image_files:
+            self.main.curr_img_idx = 0
+        else:
+            self.main.curr_img_idx = -1
+
+        if self.main.webtoon_mode and hasattr(self.main.image_viewer, "webtoon_manager"):
+            manager = self.main.image_viewer.webtoon_manager
+            try:
+                manager.scene_item_manager.save_all_scene_items_to_states()
+            except Exception:
+                pass
+            current_page = max(0, self.main.curr_img_idx)
+            manager.load_images_lazy(self.main.image_files, current_page)
+
+        self.main.page_list.blockSignals(True)
+        self.update_image_cards()
+        if 0 <= self.main.curr_img_idx < len(self.main.image_files):
+            self.main.page_list.setCurrentRow(self.main.curr_img_idx)
+            self.highlight_card(self.main.curr_img_idx)
+            self.page_list_loader.force_load_image(self.main.curr_img_idx)
+            current_path = self.main.image_files[self.main.curr_img_idx]
+            if current_path in self.main.undo_stacks:
+                self.main.undo_group.setActiveStack(self.main.undo_stacks[current_path])
+        self.main.page_list.blockSignals(False)
+
+        self.main.mark_project_dirty()
+
     def on_card_selected(self, current, previous):
         if not current:
             self._hide_active_page_skip_error()
             return
 
-        index = self.main.page_list.row(current)
-        file_path = self.main.image_files[index]
+        file_path = current.data(QtCore.Qt.ItemDataRole.UserRole)
+        if isinstance(file_path, str) and file_path in self.main.image_files:
+            index = self.main.image_files.index(file_path)
+        else:
+            index = self.main.page_list.row(current)
+            if not (0 <= index < len(self.main.image_files)):
+                self._hide_active_page_skip_error()
+                return
+            file_path = self.main.image_files[index]
         self.main.curr_tblock_item = None
         # Force load the selected image thumbnail
         self.page_list_loader.force_load_image(index)
@@ -931,15 +1049,20 @@ class ImageStateController:
             viewer.viewport().update()
 
     def on_image_skipped(self, image_path: str, skip_reason: str, error: str):
+        summarized_error = self._summarize_skip_error(error)
+        if hasattr(self.main, "register_batch_skip"):
+            self.main.register_batch_skip(image_path, skip_reason, summarized_error)
+
         if self._is_content_flagged_error(error):
-            reason = error.split(": ")[-1] if ": " in error else error
+            reason = summarized_error.split(": ")[-1] if ": " in summarized_error else summarized_error
             file_name = os.path.basename(image_path)
-            text = Messages.get_content_flagged_text(
-                details=f"Skipping: {file_name}\nReason: {reason}",
+            flagged_msg = Messages.get_content_flagged_text(
+                details=reason,
                 context=skip_reason,
             )
+            text = f"Skipping: {file_name}\n{flagged_msg}"
         else:
-            text = self._build_skip_message(image_path, skip_reason, error)
+            text = self._build_skip_message(image_path, skip_reason, summarized_error)
         dayu_type = self._resolve_skip_message_type(skip_reason, error)
         self._page_skip_errors[image_path] = {
             "text": text,
