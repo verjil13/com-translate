@@ -42,9 +42,9 @@ def validate_ocr(main: ComicTranslate):
         Messages.show_missing_tool_error(main, QCoreApplication.translate("Messages", "Text Recognition model"))
         return False
     
-    if not settings_page.is_logged_in():
-        Messages.show_not_logged_in_error(main)
-        return False
+    #if not settings_page.is_logged_in():
+    #    Messages.show_not_logged_in_error(main)
+    #    return False
         
     return True
 
@@ -61,9 +61,9 @@ def validate_translator(main: ComicTranslate, target_lang: str):
         Messages.show_missing_tool_error(main, QCoreApplication.translate("Messages", "Translator"))
         return False
 
-    if not settings_page.is_logged_in():
-        Messages.show_not_logged_in_error(main)
-        return False
+    #if not settings_page.is_logged_in():
+    #    Messages.show_not_logged_in_error(main)
+    #    return False
 
     # Credential checks
     if "Custom" in translator_tool:
