@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor
 
 from modules.detection.processor import TextBlockDetector
@@ -76,6 +77,10 @@ class WebtoonBatchProcessor:
         self.edge_threshold = 50  # pixels from edge to consider as "near edge"
         
     def skip_save(self, directory, timestamp, base_name, extension, archive_bname, image):
+        export_settings = self.main_page.settings_page.get_export_settings()
+        if not export_settings.get('auto_save', True):
+            logger.info("Auto-save is OFF. Skipping fallback image save for '%s'.", base_name)
+            return
         path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
@@ -281,7 +286,9 @@ class WebtoonBatchProcessor:
             except InsufficientCreditsException:
                 raise
             except Exception as e:
-                if isinstance(e, requests.exceptions.HTTPError):
+                if isinstance(e, requests.exceptions.ConnectionError):
+                    err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
+                elif isinstance(e, requests.exceptions.HTTPError):
                     try:
                         err_msg = e.response.json().get("error_description", str(e))
                     except Exception:
@@ -354,7 +361,9 @@ class WebtoonBatchProcessor:
             except InsufficientCreditsException:
                 raise
             except Exception as e:
-                if isinstance(e, requests.exceptions.HTTPError):
+                if isinstance(e, requests.exceptions.ConnectionError):
+                    err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
+                elif isinstance(e, requests.exceptions.HTTPError):
                     try:
                         err_msg = e.response.json().get("error_description", str(e))
                     except Exception:

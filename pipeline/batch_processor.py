@@ -15,6 +15,7 @@ import unicodedata
 from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import List
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor
 
 from modules.detection.processor import TextBlockDetector
@@ -69,6 +70,10 @@ class BatchProcessor:
         self.ocr_handler = ocr_handler
 
     def skip_save(self, directory, timestamp, base_name, extension, archive_bname, image):
+        export_settings = self.main_page.settings_page.get_export_settings()
+        if not export_settings.get('auto_save', True):
+            logger.info("Auto-save is OFF. Skipping fallback image save for '%s'.", base_name)
+            return
         path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
@@ -218,9 +223,15 @@ class BatchProcessor:
                     # >>> ВАЖНО: удаляем мусорные блоки после OCR
                     blk_list = self.auto_delete_trash_blocks(blk_list)
                     self.main_page.blk_list = blk_list
-
+                except InsufficientCreditsException:
+                    raise
+                    
                 except Exception as e:
-                    if isinstance(e, requests.exceptions.HTTPError):
+                    # if it's a connection/network error, give a short message
+                    if isinstance(e, requests.exceptions.ConnectionError):
+                        err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
+                    # if it's an HTTPError, try to pull the "error_description" field
+                    elif isinstance(e, requests.exceptions.HTTPError):                        
                         try:
                             err_json = e.response.json()
                             err_msg = err_json.get("error_description", str(e))
@@ -312,8 +323,11 @@ class BatchProcessor:
             except InsufficientCreditsException:
                 raise
             except Exception as e:
+                # if it's a connection/network error, give a short message
+                if isinstance(e, requests.exceptions.ConnectionError):
+                    err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
                 # if it's an HTTPError, try to pull the "error_description" field
-                if isinstance(e, requests.exceptions.HTTPError):
+                elif isinstance(e, requests.exceptions.HTTPError):
                     try:
                         err_json = e.response.json()
                         err_msg = err_json.get("error_description", str(e))
