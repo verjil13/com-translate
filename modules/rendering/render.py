@@ -124,19 +124,12 @@ def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str,
         mutable_message = min_text
     
     return mutable_message, font_size
-############################################
+
 def get_best_render_area(
     blk_list: List[TextBlock],
     img,
     inpainted_img=None
 ):
-    """
-    Автоматический режим:
-    - определяет область для рендера
-    - ЦЕНТРИРУЕТ текст по вертикали и горизонтали внутри пузыря
-    """
-
-
     #if inpainted_img is None or inpainted_img.size == 0:
     #    return blk_list
 
@@ -160,17 +153,6 @@ def get_best_render_area(
         x1, y1, x2, y2 = text_draw_bounds
         box_w = x2 - x1
         box_h = y2 - y1
-
-        # --------------------------------------------------
-        # ❌ СТАРЫЙ РУЧНОЙ СДВИГ (ОСТАВЛЕН, КАК ПРОСИЛ)
-        # --------------------------------------------------
-        # vertical_offset = int(box_h * 0.08)
-        # blk.xyxy[:] = [x1, y1 + vertical_offset, x2, y2]
-        # continue
-
-        # --------------------------------------------------
-        # ✅ НОВОЕ: АВТОЦЕНТРИРОВАНИЕ
-        # --------------------------------------------------
 
         # Берём текущий bbox (его размер уже подогнан ранее)
         cur_x1, cur_y1, cur_x2, cur_y2 = blk.xyxy
@@ -196,10 +178,6 @@ def get_best_render_area(
 
     return blk_list
 
-# ============================================================
-# PYSIDE WORD WRAP (исправленный)
-# ============================================================
-
 def pyside_word_wrap(
     text: str,
     font_input: str,
@@ -215,7 +193,7 @@ def pyside_word_wrap(
     max_font_size: int = 40,
     min_font_size: int = 10,
     vertical: bool = False,
-    width_coef: float = 1.3, # коэффициент по высоте ширине 1.25
+    width_coef: float = 1.25, # коэффициент по ширине 1.25
     height_coef: float = 1.1,  # коэффициент по высоте 1.05
 ) -> tuple[str, int]:
     """
