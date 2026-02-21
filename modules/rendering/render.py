@@ -160,8 +160,8 @@ def get_best_render_area(
         cur_h = cur_y2 - cur_y1
 
         # Центр пузыря
-        center_x = x1 + ((0.9 * box_w) // 2)
-        center_y = y1 + ((0.9 * box_h) // 2) #1.2
+        center_x = x1 + ((1.0 * box_w) // 2)
+        center_y = y1 + ((0.9 * box_h) // 2)
 
         # Новый bbox — по центру
         new_x1 = int(center_x - cur_w // 2)

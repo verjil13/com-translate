@@ -477,7 +477,7 @@ class BatchProcessor:
                 text_h = metrics.height() * len(text_lines)  # высота всего текста
                 # центрирование внутри исходного блока
                 new_x1 = x1 + (width - text_w) // 2
-                new_y1 = y1 + 0.5*(height - text_h) // 2
+                new_y1 = y1 + (height - text_h) // 2
                 new_x2 = new_x1 + text_w
                 new_y2 = new_y1 + text_h
                 
