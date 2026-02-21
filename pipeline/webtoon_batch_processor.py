@@ -10,6 +10,14 @@ from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor
+from PySide6.QtGui import (
+    QFont,
+    QTextDocument,
+    QTextCursor,
+    QTextBlockFormat,
+    QTextOption,
+    QFontMetrics
+)
 
 from modules.detection.processor import TextBlockDetector
 from modules.translation.processor import Translator
@@ -807,6 +815,29 @@ class WebtoonBatchProcessor:
                 min_font_size,
                 vertical
             )
+            
+            ##################
+            # Центрируем bbox блока под размер текста
+            # вычисляем ширину и высоту текста в пикселях
+            font1 = QFont(font, font_size)
+            font1.setBold(bold)
+            font1.setItalic(italic)
+            font1.setUnderline(underline)
+            metrics = QFontMetrics(font1)
+            text_lines = translation.split("\n")
+            text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
+            text_h = metrics.height() * len(text_lines)  # высота всего текста
+            # центрирование внутри исходного блока
+            new_x1 = x1 + (width - text_w) // 2
+            new_y1 = y1 + (height - text_h) // 2
+            new_x2 = new_x1 + text_w
+            new_y2 = new_y1 + text_h
+            
+            x1 = new_x1
+            y1 = new_y1
+            width = new_x2                
+            height = new_x2
+            ##################
             
             if is_no_space_lang(trg_lng_cd):
                 translation = translation.replace(' ', '')
