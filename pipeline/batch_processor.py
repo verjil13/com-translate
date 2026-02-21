@@ -447,6 +447,7 @@ class BatchProcessor:
                 vertical = is_vertical_block(blk, trg_lng_cd)
 
                 translation, font_size = pyside_word_wrap(
+                    blk_list,
                     translation, 
                     font, 
                     width, 

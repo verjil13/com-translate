@@ -791,6 +791,7 @@ class WebtoonBatchProcessor:
             vertical = is_vertical_block(blk_virtual, trg_lng_cd)
 
             translation, font_size = pyside_word_wrap(
+                blk_list_virtual,
                 translation, 
                 font, 
                 width, 

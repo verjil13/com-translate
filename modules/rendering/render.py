@@ -144,8 +144,8 @@ def get_best_render_area(
         has_spaces = " " in translation.strip()
         is_vertical_text = not has_spaces
 
-        # Базовая область
-        text_draw_bounds = shrink_bbox(
+        # Базовая область       
+        text_draw_bounds = shrink_bbox(            
             blk.bubble_xyxy,
             0.3 if is_vertical_text else 0.05
         )
@@ -173,12 +173,13 @@ def get_best_render_area(
 
 
     if blk_list and blk_list[0].source_lang not in ['ko', 'zh', 'ja']:
-        adjust_blks_size(blk_list, img, -20, -20)
+        adjust_blks_size(blk_list, img, -5, -5)
 
 
     return blk_list
 
 def pyside_word_wrap(
+    blk_list: List[TextBlock],
     text: str,
     font_input: str,
     roi_width: int,
@@ -193,7 +194,7 @@ def pyside_word_wrap(
     max_font_size: int = 40,
     min_font_size: int = 10,
     vertical: bool = False,
-    width_coef: float = 1.25, # коэффициент по ширине 1.25
+    width_coef: float = 1.2, # коэффициент по ширине 1.25
     height_coef: float = 1.1,  # коэффициент по высоте 1.05
 ) -> tuple[str, int]:
     """
@@ -215,9 +216,12 @@ def pyside_word_wrap(
         return "", min_font_size
 
     # --- коэффициенты удобства ---
-    adjusted_width = roi_width * width_coef
-    adjusted_height = roi_height * height_coef
-   
+    if blk_list and blk_list[0].source_lang in ['ko', 'zh', 'ja']:
+        adjusted_width = roi_width * width_coef
+        adjusted_height = roi_height * height_coef
+    else:
+        adjusted_width = roi_width
+        adjusted_height = roi_height
 
     # --- подготовка шрифта ---
     def prepare_font(size: int) -> QFont:
@@ -392,6 +396,7 @@ def manual_wrap(
 
         # 1️⃣ Подбираем текст и размер шрифта
         wrapped_text, font_size = pyside_word_wrap(
+            blk_list,
             translation,
             font_family,
             width,

@@ -771,6 +771,7 @@ class TextController:
 
                         vertical = is_vertical_block(blk, trg_lng_cd)
                         wrapped, font_size = pyside_word_wrap(
+                            blk_list,
                             translation,
                             font_family,
                             width,
