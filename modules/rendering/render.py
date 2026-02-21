@@ -172,8 +172,8 @@ def get_best_render_area(
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
 
 
-    if blk_list and blk_list[0].source_lang not in ['ko', 'zh']:
-        adjust_blks_size(blk_list, img, -5, -5)
+    if blk_list and blk_list[0].source_lang not in ['ko', 'zh', 'ja']:
+        adjust_blks_size(blk_list, img, -20, -20)
 
 
     return blk_list
@@ -217,6 +217,7 @@ def pyside_word_wrap(
     # --- коэффициенты удобства ---
     adjusted_width = roi_width * width_coef
     adjusted_height = roi_height * height_coef
+   
 
     # --- подготовка шрифта ---
     def prepare_font(size: int) -> QFont:
@@ -250,22 +251,22 @@ def pyside_word_wrap(
             space = " " if current_line else ""
             test_line = current_line + space + word
     
-            # 1️⃣ Слово помещается в текущую строку
+            # Слово помещается в текущую строку
             if metrics.horizontalAdvance(test_line) <= adjusted_width:
                 current_line = test_line
                 continue
     
-            # 2️⃣ Перенос по пробелу (идеальный случай)
+            # Перенос по пробелу (идеальный случай)
             if current_line:
                 lines.append(current_line)
                 current_line = ""
     
-            # 3️⃣ Слово целиком помещается на новой строке
+            # Слово целиком помещается на новой строке
             if metrics.horizontalAdvance(word) <= adjusted_width:
                 current_line = word
                 continue
     
-            # 4️⃣ Слово слишком длинное — умный перенос по частям
+            # Слово слишком длинное — умный перенос по частям
             has_hyphen = True
             remaining = word
     
