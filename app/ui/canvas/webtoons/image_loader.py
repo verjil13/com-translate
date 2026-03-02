@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsRectItem
 from PySide6.QtCore import QTimer, QRectF, Qt
 from PySide6.QtGui import QPixmap, QColor, QPen, QBrush, QImage, QPainter
 import imkit as imk
+from app.path_materialization import ensure_path_materialized
 
 
 class LazyImageLoader:
@@ -126,6 +127,7 @@ class LazyImageLoader:
         try:
             # Load the actual image
             file_path = self.image_file_paths[page_idx]
+            ensure_path_materialized(file_path)
             img = imk.read_image(file_path)
             
             if img is not None:
@@ -717,3 +719,4 @@ class LazyImageLoader:
             return None
         removed_before = sum(1 for rem_idx in removed_indices if rem_idx < old_idx)
         return old_idx - removed_before
+

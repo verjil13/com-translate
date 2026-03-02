@@ -1,4 +1,4 @@
-import os, sys
+﻿import os, sys
 import logging
 import hashlib
 import json
@@ -6,6 +6,7 @@ import threading
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtCore import QSettings, QTranslator, QLocale, \
     Qt, QTimer, QThread, QObject, Signal, Slot, QEvent
+from PySide6.QtCore import QLibraryInfo
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 from app.ui.splash_screen import SplashScreen
@@ -272,6 +273,9 @@ def main():
                     self.request_open_project(project_file)
                 elif self._pending_project_file:
                     self.request_open_project(self._pending_project_file)
+                else:
+                    # Offer recovery only on plain startup (no explicit project open request).
+                    self._ct.project_ctrl.prompt_restore_recovery_if_available()
             except Exception as e:
                 logging.error(f"Error during UI initialization: {e}")
                 splash.close()
@@ -357,6 +361,7 @@ def get_system_language():
         'ko': '한국어',
         'fr': 'Français',
         'ru': 'русский',
+        'ja': '日本語',
         'de': 'Deutsch',
         'es': 'Español',
         'it': 'Italiano',
@@ -372,6 +377,7 @@ def load_translation(app, language: str):
         'Français': 'fr',
         '简体中文': 'zh-CN',
         'русский': 'ru',
+        '日本語': 'ja',
         'Deutsch': 'de',
         'Español': 'es',
         'Italiano': 'it',
@@ -393,7 +399,6 @@ def load_translation(app, language: str):
     qt_translator = QTranslator(app)
     # qtbase uses underscores (e.g. qtbase_zh_CN.qm, qtbase_fr.qm)
     qt_lang_code = lang_code.replace('-', '_')
-    from PySide6.QtCore import QLibraryInfo
     qt_tr_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
     
     # Try loading from the local directory first (if bundled)

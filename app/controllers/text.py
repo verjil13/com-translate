@@ -764,7 +764,7 @@ class TextController:
                         if blk_key in existing_keys:
                             continue
 
-                        x1, y1, width, height = blk.xywh
+                        x1, y1, block_width, block_height = blk.xywh
                         translation = blk.translation
                         if not translation or len(translation) == 1:
                             continue
@@ -774,8 +774,8 @@ class TextController:
                             blk_list,
                             translation,
                             font_family,
-                            width,
-                            height,
+                            block_width,
+                            block_height,
                             line_spacing,
                             outline_width,
                             bold,
@@ -786,6 +786,7 @@ class TextController:
                             max_font_size,
                             min_font_size,
                             vertical,
+                            return_metrics=True,
                         )
                         if is_no_space_lang(trg_lng_cd):
                             wrapped = wrapped.replace(" ", "")
@@ -808,7 +809,8 @@ class TextController:
                             rotation=blk.angle,
                             scale=1.0,
                             transform_origin=blk.tr_origin_point if blk.tr_origin_point else (0, 0),
-                            width=width,
+                            width=block_width,
+                            height=block_height,
                             vertical=vertical,
                         )
                         new_text_items_state.append(text_props.to_dict())

@@ -15,7 +15,7 @@ from app.account.auth.auth_client import AuthClient, USER_INFO_GROUP, \
     EMAIL_KEY, TIER_KEY, CREDITS_KEY, MONTHLY_CREDITS_KEY
 from app.account.config import API_BASE_URL, FRONTEND_BASE_URL
 from app.update_checker import UpdateChecker
-from modules.utils.paths import get_user_data_dir
+from modules.utils.paths import get_user_data_dir, get_default_project_autosave_dir
 
 
 logger = logging.getLogger(__name__)
@@ -124,12 +124,26 @@ class SettingsPage(QtWidgets.QWidget):
         }
 
     def get_export_settings(self):
+        owner = self.window()
+        title_bar = getattr(owner, "title_bar", None)
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup('export')
+        persisted_autosave_enabled = settings.value('project_autosave_enabled', False, type=bool)
+        settings.endGroup()
+        if title_bar is not None:
+            autosave_enabled = bool(title_bar.autosave_switch.isChecked())
+        else:
+            autosave_enabled = bool(persisted_autosave_enabled)
+        autosave_folder = self.ui.project_autosave_folder_input.text().strip()
+        if not autosave_folder:
+            autosave_folder = get_default_project_autosave_dir()
         settings = {
-            'auto_save': self.ui.auto_save_checkbox.isChecked(),
             'export_raw_text': self.ui.raw_text_checkbox.isChecked(),
             'export_translated_text': self.ui.translated_text_checkbox.isChecked(),
             'export_inpainted_image': self.ui.inpainted_image_checkbox.isChecked(),
-            'archive_save_as': self.ui.archive_save_as_combo.currentText(),
+            'project_autosave_enabled': autosave_enabled,
+            'project_autosave_interval_min': int(self.ui.project_autosave_interval_spinbox.value()),
+            'project_autosave_folder': autosave_folder,
         }
         return settings
 
@@ -257,6 +271,12 @@ class SettingsPage(QtWidgets.QWidget):
         for key, value in all_settings.items():
             process_group(key, value, settings)
 
+        # Remove deprecated export keys from older versions.
+        settings.beginGroup('export')
+        settings.remove('auto_save')
+        settings.remove('archive_save_as')
+        settings.endGroup()
+
         # Save credentials separately if save_keys is checked
         credentials = self.get_credentials()
         save_keys = self.ui.save_keys_checkbox.isChecked()
@@ -349,14 +369,20 @@ class SettingsPage(QtWidgets.QWidget):
 
         # Load export settings
         settings.beginGroup('export')
-        self.ui.auto_save_checkbox.setChecked(settings.value('auto_save', False, type=bool))
         self.ui.raw_text_checkbox.setChecked(settings.value('export_raw_text', False, type=bool))
         self.ui.translated_text_checkbox.setChecked(settings.value('export_translated_text', False, type=bool))
         self.ui.inpainted_image_checkbox.setChecked(settings.value('export_inpainted_image', False, type=bool))
-
-        # New: single global archive output format
-        archive_save_as = settings.value('archive_save_as', 'zip')
-        self.ui.archive_save_as_combo.setCurrentText(str(archive_save_as))
+        autosave_enabled = settings.value('project_autosave_enabled', False, type=bool)
+        owner = self.parent()
+        title_bar = getattr(owner, "title_bar", None)
+        if title_bar is not None:
+            title_bar.set_autosave_checked(bool(autosave_enabled))
+        self.ui.project_autosave_interval_spinbox.setValue(
+            settings.value('project_autosave_interval_min', 3, type=int)
+        )
+        self.ui.project_autosave_folder_input.setText(
+            settings.value('project_autosave_folder', get_default_project_autosave_dir(), type=str)
+        )
 
         settings.endGroup()  # export
 

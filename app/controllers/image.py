@@ -15,6 +15,7 @@ from app.ui.commands.inpaint import PatchCommandBase
 from app.ui.commands.box import AddTextItemCommand
 from app.ui.list_view_image_loader import ListViewImageLoader
 from app.thread_worker import GenericWorker
+from app.path_materialization import ensure_path_materialized
 
 if TYPE_CHECKING:
     from controller import ComicTranslate
@@ -217,6 +218,7 @@ class ImageStateController:
             
             # Get the temp file path at the current index
             current_temp_path = self.main.image_history[file_path][current_index]
+            ensure_path_materialized(current_temp_path)
             
             # Load the image from the temp file
             rgb_image = imk.read_image(current_temp_path)
@@ -226,6 +228,7 @@ class ImageStateController:
 
         # If not in memory and not in history (or failed to load from temp),
         # load from the original file path
+        ensure_path_materialized(file_path)
         rgb_image = imk.read_image(file_path)
         return rgb_image
 
@@ -270,7 +273,23 @@ class ImageStateController:
         if paths and paths[0].lower().endswith('.ctpr'):
             self.main.project_ctrl.thread_load_project(paths[0])
             return
+
+        # If autosave is active and a project file is already chosen, preserve
+        # the association so the title and autosave target survive the state reset.
+        try:
+            autosave_enabled = bool(
+                hasattr(self.main, 'title_bar')
+                and self.main.title_bar.autosave_switch.isChecked()
+            )
+        except Exception:
+            autosave_enabled = False
+        prev_project_file = self.main.project_file if autosave_enabled else None
+
+        self.main.project_ctrl.clear_recovery_checkpoint()
         self.clear_state()
+        if prev_project_file:
+            self.main.project_file = prev_project_file
+            self.main.setWindowTitle(f"{os.path.basename(prev_project_file)}[*]")
         self.main.run_threaded(self.load_initial_image, self.on_initial_image_loaded, self.main.default_error_handler, None, paths)
 
     def thread_insert(self, paths: List[str]):
@@ -308,6 +327,7 @@ class ImageStateController:
                     # Create undo stack for new file
                     stack = QtGui.QUndoStack(self.main)
                     stack.cleanChanged.connect(self.main._update_window_modified)
+                    stack.indexChanged.connect(self.main._bump_dirty_revision)
                     self.main.undo_stacks[file_path] = stack
                     self.main.undo_group.addStack(stack)
                 
@@ -366,6 +386,7 @@ class ImageStateController:
             self.save_image_state(file)
             stack = QtGui.QUndoStack(self.main)
             stack.cleanChanged.connect(self.main._update_window_modified)
+            stack.indexChanged.connect(self.main._bump_dirty_revision)
             try:
                 if hasattr(self.main, "search_ctrl") and self.main.search_ctrl is not None:
                     stack.indexChanged.connect(self.main.search_ctrl.on_undo_redo)
@@ -621,6 +642,7 @@ class ImageStateController:
             if request_id is not None and request_id != self._nav_request_id:
                 return
             if saved['hash'] not in mem_hashes:
+                ensure_path_materialized(saved['png_path'])
                 rgb_img = imk.read_image(saved['png_path'])
                 if rgb_img is not None:
                     loaded.append({
@@ -743,6 +765,10 @@ class ImageStateController:
                 self.main.image_viewer.webtoon_manager.clear()
                 self.main.curr_img_idx = -1
                 self.main.central_stack.setCurrentWidget(self.main.drag_browser)
+                try:
+                    self.main.show_home_screen()
+                except Exception:
+                    pass
                 self.update_image_cards()
         else:
             # Handle normal mode
@@ -763,7 +789,16 @@ class ImageStateController:
                 # If no images remain, reset the view to the drag browser.
                 self.main.curr_img_idx = -1
                 self.main.central_stack.setCurrentWidget(self.main.drag_browser)
+                try:
+                    self.main.show_home_screen()
+                except Exception:
+                    pass
                 self.update_image_cards()
+
+        # If the project has been emptied via deletion, drop stale crash recovery data.
+        if not self.main.image_files:
+            self.main.project_ctrl.clear_recovery_checkpoint()
+
         if removed_any:
             self.main.mark_project_dirty()
 
@@ -847,6 +882,7 @@ class ImageStateController:
                 }
             else:
                 # load into memory
+                ensure_path_materialized(saved['png_path'])
                 rgb_img = imk.read_image(saved['png_path'])
                 prop = {
                     'bbox': saved['bbox'],
@@ -978,7 +1014,14 @@ class ImageStateController:
             else:
                 # Regular mode - display single image
                 self.main.central_stack.setCurrentWidget(self.main.image_viewer)
-                
+
+            # If the outer stack is still on the home screen, transition to the editor
+            try:
+                if self.main._center_stack.currentWidget() is self.main.startup_home:
+                    self.main.show_main_page()
+            except Exception:
+                pass
+
             self.main.central_stack.layout().activate()
             
             # Fit in view only if it's the first time displaying this image and not in webtoon mode

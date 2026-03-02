@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import json
-import shutil
 import requests
 import logging
 import traceback
@@ -33,15 +32,13 @@ from modules.utils.textblock import sort_blk_list
 from modules.utils.pipeline_config import inpaint_map, get_config
 from modules.utils.image_utils import generate_mask, get_smart_text_color
 from modules.utils.language_utils import get_language_code, is_no_space_lang
-from modules.utils.common_utils import is_directory_empty
 from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations
-from modules.utils.archives import make, resolve_save_as_ext
 from modules.rendering.render import get_best_render_area, pyside_word_wrap, is_vertical_block
 from modules.utils.device import resolve_device
 from modules.utils.exceptions import InsufficientCreditsException
+from app.path_materialization import ensure_path_materialized
 from app.ui.canvas.text_item import OutlineInfo, OutlineType
 from app.ui.canvas.text.text_item_properties import TextItemProperties
-from app.ui.canvas.save_renderer import ImageSaveRenderer
 from app.ui.messages import Messages
 from .cache_manager import CacheManager
 from .block_detection import BlockDetectionHandler
@@ -80,14 +77,7 @@ class BatchProcessor:
         self.ocr_handler = ocr_handler
 
     def skip_save(self, directory, timestamp, base_name, extension, archive_bname, image):
-        export_settings = self.main_page.settings_page.get_export_settings()
-        if not export_settings.get('auto_save', True):
-            logger.info("Auto-save is OFF. Skipping fallback image save for '%s'.", base_name)
-            return
-        path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-        if not os.path.exists(path):
-            os.makedirs(path, exist_ok=True)
-        imk.write_image(os.path.join(path, f"{base_name}_translated{extension}"), image)
+        logger.info("Skipping fallback translated image save for '%s'.", base_name)
 
     def emit_progress(self, index, total, step, steps, change_name):
         """Wrapper around main_page.progress_update.emit that logs a human-readable stage."""
@@ -107,11 +97,8 @@ class BatchProcessor:
         self.main_page.progress_update.emit(index, total, step, steps, change_name)
 
     def log_skipped_image(self, directory, timestamp, image_path, reason="", full_traceback=""):
-        skipped_file = os.path.join(directory, f"comic_translate_{timestamp}", "skipped_images.txt")
-        with open(skipped_file, 'a', encoding='UTF-8') as file:
-            file.write(image_path + "\n")
-            file.write(reason + "\n")
-            file.write("\n")
+        # Deprecated: skip details are captured by batch reporting/UI signals.
+        return
 
 
     # --------------------------------------------------
@@ -162,6 +149,12 @@ class BatchProcessor:
         timestamp = datetime.now().strftime("%b-%d-%Y_%I-%M-%S%p")
         image_list = selected_paths if selected_paths is not None else self.main_page.image_files
         total_images = len(image_list)
+        try:
+            if self.main_page.file_handler.should_pre_materialize(image_list):
+                count = self.main_page.file_handler.pre_materialize(image_list)
+                logger.info("Batch pre-materialized %d paths before full-run processing.", count)
+        except Exception:
+            logger.debug("Batch pre-materialization failed; continuing lazily.", exc_info=True)
 
         for index, image_path in enumerate(image_list):
             if self._is_cancelled():
@@ -193,6 +186,7 @@ class BatchProcessor:
                         directory = os.path.dirname(archive_path)
                         archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
 
+            ensure_path_materialized(image_path)
             image = imk.read_image(image_path)
 
             # skip UI-skipped images
@@ -399,15 +393,23 @@ class BatchProcessor:
                 path = os.path.join(directory, f"comic_translate_{timestamp}", "raw_texts", archive_bname)
                 if not os.path.exists(path):
                     os.makedirs(path, exist_ok=True)
-                file = open(os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_raw.txt"), 'w', encoding='UTF-8')
-                file.write(entire_raw_text)
+                with open(
+                    os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_raw.json"),
+                    'w',
+                    encoding='UTF-8',
+                ) as file:
+                    file.write(entire_raw_text)
 
             if export_settings['export_translated_text']:
                 path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_texts", archive_bname)
                 if not os.path.exists(path):
                     os.makedirs(path, exist_ok=True)
-                file = open(os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_translated.txt"), 'w', encoding='UTF-8')
-                file.write(entire_translated_text)
+                with open(
+                    os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_translated.json"),
+                    'w',
+                    encoding='UTF-8',
+                ) as file:
+                    file.write(entire_translated_text)
 
             self.emit_progress(index, total_images, 7, 10, False)
             if self._is_cancelled():
@@ -438,7 +440,6 @@ class BatchProcessor:
             text_items_state = []
             for blk in blk_list:
                 x1, y1, width, height = blk.xywh
- 
                 translation = blk.translation
                 if not translation or len(translation) == 0: #1
                     continue
@@ -517,6 +518,7 @@ class BatchProcessor:
                     scale=1.0,
                     transform_origin=blk.tr_origin_point,
                     width=width,
+                    height=height,
                     direction=direction,
                     vertical=vertical,
                     selection_outlines=[
@@ -552,67 +554,6 @@ class BatchProcessor:
 
             if image_path == file_on_display:
                 self.main_page.blk_list = blk_list
-                
-            render_save_dir = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-            
-            # Conditional Save: Final Rendered Image
-            if export_settings['auto_save']:
-                if not os.path.exists(render_save_dir):
-                    os.makedirs(render_save_dir, exist_ok=True)
-                sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
-
-                renderer = ImageSaveRenderer(image)
-                viewer_state = self.main_page.image_states[image_path]['viewer_state'].copy()
-                patches = self.main_page.image_patches.get(image_path, [])
-                renderer.apply_patches(patches)
-                renderer.add_state_to_image(viewer_state)
-                renderer.save_image(sv_pth)
-            else:
-                # If auto-save is OFF, we still want to apply the state to the image state
-                # so the user can verify it in the UI, but we don't write to disk.
-                pass
 
             self.emit_progress(index, total_images, 10, 10, False)
 
-        archive_info_list = self.main_page.file_handler.archive_info
-        # Conditional Save: Archives (controlled by auto_save)
-        if self._is_cancelled():
-            return
-        if archive_info_list and export_settings['auto_save']:
-            archive_save_as = settings_page.get_export_settings().get('archive_save_as')
-            for archive_index, archive in enumerate(archive_info_list):
-                archive_index_input = total_images + archive_index
-
-                self.emit_progress(archive_index_input, total_images, 1, 3, True)
-                if self._is_cancelled():
-                    return
-
-                archive_path = archive['archive_path']
-                archive_ext = os.path.splitext(archive_path)[1]
-                archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
-                archive_directory = os.path.dirname(archive_path)
-                save_as_ext = resolve_save_as_ext(archive_ext, archive_save_as)
-
-                save_dir = os.path.join(archive_directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-                check_from = os.path.join(archive_directory, f"comic_translate_{timestamp}")
-
-                self.emit_progress(archive_index_input, total_images, 2, 3, True)
-                if self._is_cancelled():
-                    return
-
-                # Create the new archive
-                output_base_name = f"{archive_bname}"
-                make(save_as_ext=save_as_ext, input_dir=save_dir, 
-                    output_dir=archive_directory, output_base_name=output_base_name)
-
-                self.emit_progress(archive_index_input, total_images, 3, 3, True)
-                if self._is_cancelled():
-                    return
-
-                # Clean up temporary 
-                if os.path.exists(save_dir):
-                    shutil.rmtree(save_dir)
-                # The temp dir is removed when closing the app
-
-                if is_directory_empty(check_from):
-                    shutil.rmtree(check_from)

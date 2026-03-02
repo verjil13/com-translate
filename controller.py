@@ -87,6 +87,7 @@ class ComicTranslate(ComicTranslateUI):
         self.project_file = None
         self.temp_dir = tempfile.mkdtemp()
         self._manual_dirty = False
+        self._dirty_revision = 0
         self._skip_close_prompt = False
 
         self.pipeline = ComicTranslatePipeline(self)
@@ -112,6 +113,7 @@ class ComicTranslate(ComicTranslateUI):
         self.progress_update.connect(self.update_progress)
         self.blk_rendered.connect(self.text_ctrl.on_blk_rendered)
         self.render_state_ready.connect(self.image_ctrl.on_render_state_ready)
+        self.render_state_ready.connect(self.project_ctrl._on_batch_page_done)
         self.download_event.connect(self.on_download_event)
 
         self.connect_ui_elements()
@@ -119,6 +121,10 @@ class ComicTranslate(ComicTranslateUI):
 
         self.project_ctrl.load_main_page_settings()
         self.settings_page.load_settings()
+        self.project_ctrl.initialize_autosave()
+
+        # Populate the home screen with any previously-saved recent projects
+        self.startup_home.populate(self.project_ctrl.get_recent_projects())
         
         # Check for updates in background
         self.settings_page.check_for_updates(is_background=True)
@@ -222,8 +228,21 @@ class ComicTranslate(ComicTranslateUI):
         # New project and safety confirmations
         self.new_project_button.clicked.connect(self._on_new_project_clicked)
 
+        # Home screen signals
+        self.startup_home.sig_open_files.connect(self._guarded_thread_load_images)
+        self.startup_home.sig_open_project.connect(self._open_project_from_home)
+        self.startup_home._sig_remove_one.connect(self._on_home_remove_recent)
+        self.startup_home._sig_clear_all.connect(self._on_home_clear_recent)
+        self.startup_home._sig_pin.connect(
+            lambda path, pinned: self.project_ctrl.toggle_pin_project(path, pinned)
+        )
+
     def _guarded_thread_load_images(self, paths: list[str]):
         """Wrap thread_load_images with unsaved-project confirmation and clear state."""
+        if not paths:
+            # Empty list = "New Project" action from the home screen
+            self._on_new_project_clicked()
+            return
         if not self._confirm_start_new_project():
             return
         self.image_ctrl.thread_load_images(paths)
@@ -232,13 +251,37 @@ class ComicTranslate(ComicTranslateUI):
         """Clear the app to initial state after confirmation."""
         if not self._confirm_start_new_project():
             return
-        # Clear state and show the drag area
+        self.project_ctrl.clear_recovery_checkpoint()
+        # Clear state and switch to the main editor showing the drag area
         self.image_ctrl.clear_state()
         self.central_stack.setCurrentWidget(self.drag_browser)
+        self.show_main_page()
+        self.project_ctrl.ensure_autosave_project_file_for_new_project()
         # Reset webtoon mode UI state
         if self.webtoon_mode:
             self.webtoon_toggle.setChecked(False)
         self.webtoon_mode = False
+
+    # Home screen helper methods
+
+    def _open_project_from_home(self, path: str):
+        """Load a .ctpr project selected on the home screen."""
+        if not self._confirm_start_new_project():
+            return
+        if not path or not path.lower().endswith(".ctpr"):
+            # Treat as generic files
+            self._guarded_thread_load_images([path])
+            return
+        self.project_ctrl.thread_load_project(path)
+        self.show_main_page()
+
+    def _on_home_remove_recent(self, path: str):
+        """Persist removal of one entry from the recent list."""
+        self.project_ctrl.remove_recent_project(path)
+
+    def _on_home_clear_recent(self):
+        """Persist clearing of the entire recent list."""
+        self.project_ctrl.clear_recent_projects()
 
     def connect_rect_item_signals(self, rect_item, force_reconnect: bool = False): return self.rect_item_ctrl.connect_rect_item_signals(rect_item, force_reconnect=force_reconnect)
     def apply_inpaint_patches(self, patches): return self.image_ctrl.apply_inpaint_patches(patches)
@@ -270,7 +313,15 @@ class ComicTranslate(ComicTranslateUI):
     def has_unsaved_changes(self) -> bool:
         return bool(self._manual_dirty) or self._any_undo_dirty()
 
+    def _bump_dirty_revision(self, *_):
+        self._dirty_revision += 1
+        try:
+            self.project_ctrl.notify_project_dirty_revision_changed()
+        except Exception:
+            pass
+
     def mark_project_dirty(self):
+        self._bump_dirty_revision()
         self._manual_dirty = True
         self._update_window_modified()
 
@@ -661,6 +712,7 @@ class ComicTranslate(ComicTranslateUI):
         else:
             self._skip_close_prompt = False
 
+        self.project_ctrl.shutdown_autosave(clear_recovery=True)
         self.shutdown()
 
         # Save all settings when the application is closed

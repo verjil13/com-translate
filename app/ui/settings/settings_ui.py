@@ -1,4 +1,4 @@
-import os
+﻿import os
 from PySide6 import QtWidgets
 from PySide6 import QtCore
 
@@ -12,6 +12,7 @@ from .tools_page import ToolsPage
 from .credentials_page import CredentialsPage
 from .llms_page import LlmsPage
 from .text_rendering_page import TextRenderingPage
+from .project_page import ProjectPage
 from .export_page import ExportPage
 from .account_page import AccountPage
 from .about_page import AboutPage
@@ -82,6 +83,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             'Français', 
             '简体中文', 
             'русский', 
+            '日本語', 
             'Deutsch', 
             'Español', 
             'Italiano', 
@@ -97,6 +99,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             "Français": "Français",
             "简体中文": "简体中文",
             "русский": "русский",
+            "日本語": "日本語",
             "Deutsch": "Deutsch",
             "Español": "Español",
             "Italiano": "Italiano",
@@ -186,6 +189,7 @@ class SettingsPageUI(QtWidgets.QWidget):
         )
         self.llms_page = LlmsPage(parent=self)
         self.text_rendering_page = TextRenderingPage(parent=self)
+        self.project_page = ProjectPage(parent=self)
         self.export_page = ExportPage(parent=self)
         self.account_page = AccountPage(parent=self)
         self.about_page = AboutPage(parent=self)
@@ -221,11 +225,11 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.uppercase_checkbox = self.text_rendering_page.uppercase_checkbox
 
         # Export
-        self.auto_save_checkbox = self.export_page.auto_save_checkbox
         self.raw_text_checkbox = self.export_page.raw_text_checkbox
         self.translated_text_checkbox = self.export_page.translated_text_checkbox
         self.inpainted_image_checkbox = self.export_page.inpainted_image_checkbox
-        self.archive_save_as_combo = self.export_page.archive_save_as_combo
+        self.project_autosave_interval_spinbox = self.project_page.project_autosave_interval_spinbox
+        self.project_autosave_folder_input = self.project_page.project_autosave_folder_input
 
         # Account
         self.sign_in_button = self.account_page.sign_in_button
@@ -247,6 +251,7 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.stacked_widget.addWidget(self.tools_page)
         self.stacked_widget.addWidget(self.llms_page)
         self.stacked_widget.addWidget(self.text_rendering_page)
+        self.stacked_widget.addWidget(self.project_page)
         self.stacked_widget.addWidget(self.export_page)
         self.stacked_widget.addWidget(self.credentials_page)
         self.stacked_widget.addWidget(self.about_page)
@@ -300,6 +305,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             {"title": self.tr("Tools"), "avatar": MPixmap(".svg")},
             {"title": self.tr("LLMs"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Text Rendering"), "avatar": MPixmap(".svg")},
+            {"title": self.tr("Project"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Export"), "avatar": MPixmap(".svg")},
             {"title": self.tr("Advanced"), "avatar": MPixmap(".svg")},
             {"title": self.tr("About"), "avatar": MPixmap(".svg")},

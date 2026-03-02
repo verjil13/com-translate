@@ -185,12 +185,12 @@ def pyside_word_wrap(
     roi_width: int,
     roi_height: int,
     line_spacing=1.0,
-    outline_width=0,
-    bold=False,
-    italic=False,
-    underline=False,
-    alignment=Qt.AlignLeft,
-    direction=Qt.LeftToRight,
+    outline_width=0.0,
+    bold=bool,
+    italic=bool,
+    underline=bool,
+    alignment= Qt.AlignLeft,
+    direction= Qt.LeftToRight, 
     max_font_size: int = 40,
     min_font_size: int = 10,
     vertical: bool = False,
@@ -224,12 +224,14 @@ def pyside_word_wrap(
         adjusted_height = roi_height
 
     # --- подготовка шрифта ---
-    def prepare_font(size: int) -> QFont:
-        f = QFont(font_input.strip() or "Arial", size)
-        f.setBold(bold)
-        f.setItalic(italic)
-        f.setUnderline(underline)
-        return f
+    def prepare_font(font_size):
+        effective_family = font_input.strip() if isinstance(font_input, str) and font_input.strip() else QApplication.font().family()
+        font = QFont(effective_family, font_size)
+        font.setBold(bold)
+        font.setItalic(italic)
+        font.setUnderline(underline)
+
+        return font
 
     # --- расчёт реальной высоты текста ---
     def get_text_height(metrics: QFontMetrics, wrapped: str) -> int:

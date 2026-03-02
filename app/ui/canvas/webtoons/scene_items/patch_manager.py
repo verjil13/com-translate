@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QGraphicsPixmapItem
 
 from app.ui.commands.base import PatchCommandBase
+from app.path_materialization import ensure_path_materialized
 
 
 class PatchManager:
@@ -76,6 +77,7 @@ class PatchManager:
                         mem_list = self.main_controller.in_memory_patches.setdefault(file_path, [])
                         if not any(p['hash'] == prop['hash'] for p in mem_list):
                             # Load image for in-memory storage
+                            ensure_path_materialized(patch_data['png_path'])
                             cv_img = imk.read_image(patch_data['png_path'])
                             if cv_img is not None:
                                 mem_prop = {
@@ -107,3 +109,4 @@ class PatchManager:
     def clear(self):
         """Clear all patch management state."""
         self.loaded_patch_items.clear()
+

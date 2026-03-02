@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import tempfile
+from datetime import datetime
 from typing import TYPE_CHECKING
 from dataclasses import asdict, is_dataclass
-import imkit as imk
 
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QUndoStack
 
+from app.thread_worker import GenericWorker
 from app.ui.canvas.text_item import TextBlockItem
 from app.ui.canvas.text.text_item_properties import TextItemProperties
 from app.ui.canvas.save_renderer import ImageSaveRenderer
-from app.projects.project_state import save_state_to_proj_file, load_state_from_proj_file
+from app.projects.project_state import (
+    close_state_store,
+    load_state_from_proj_file,
+    save_state_to_proj_file,
+)
 from modules.utils.archives import make
+from modules.utils.paths import get_user_data_dir, get_default_project_autosave_dir
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from controller import ComicTranslate
@@ -24,67 +33,524 @@ if TYPE_CHECKING:
 class ProjectController:
     def __init__(self, main: ComicTranslate):
         self.main = main
+        self._autosave_timer = QtCore.QTimer(self.main)
+        self._autosave_timer.setSingleShot(False)
+        self._autosave_timer.timeout.connect(self._on_autosave_timeout)
+        self._realtime_autosave_timer = QtCore.QTimer(self.main)
+        self._realtime_autosave_timer.setSingleShot(True)
+        self._realtime_autosave_timer.setInterval(800)
+        self._realtime_autosave_timer.timeout.connect(self._on_realtime_autosave_timeout)
+        self._autosave_signals_connected = False
+        self._autosave_save_pending = False
+        self._autosave_retrigger_requested = False
+        self._active_save_workers: list = []  # keeps Python refs alive until workers finish
+
+    # Recent projects (persisted via QSettings)
+
+    MAX_RECENT = 15
+
+    def _read_autosave_enabled_setting(self) -> bool:
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup("export")
+        value = settings.value("project_autosave_enabled", False, type=bool)
+        settings.endGroup()
+        return bool(value)
+
+    def _write_autosave_enabled_setting(self, enabled: bool) -> None:
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup("export")
+        settings.setValue("project_autosave_enabled", bool(enabled))
+        settings.endGroup()
+        settings.sync()
+
+    def add_recent_project(self, path: str) -> None:
+        """Push *path* to the front of the recent list; cap at MAX_RECENT."""
+        if not path or not os.path.isfile(path):
+            return
+        path = os.path.normpath(os.path.abspath(path))
+        entries = self.get_recent_projects()
+        # Preserve pin state if already present
+        existing = next((e for e in entries if os.path.normpath(e["path"]) == path), None)
+        pinned = existing.get("pinned", False) if existing else False
+        # Remove duplicates
+        entries = [e for e in entries if os.path.normpath(e["path"]) != path]
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = 0.0
+        entries.insert(0, {"path": path, "mtime": mtime, "pinned": pinned})
+        entries = entries[: self.MAX_RECENT]
+        self._save_entries(entries)
+
+    def get_recent_projects(self) -> list:
+        """Return list of ``{path, mtime, pinned}`` dicts sorted by mtime desc."""
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup("recent_projects")
+        paths   = settings.value("paths",   []) or []
+        mtimes  = settings.value("mtimes",  []) or []
+        pinneds = settings.value("pinned",  []) or []
+        settings.endGroup()
+        # Normalise types — QSettings may return a single string if only 1 entry
+        if isinstance(paths, str):   paths   = [paths]
+        if not isinstance(mtimes,  list): mtimes  = [mtimes]
+        if not isinstance(pinneds, list): pinneds = [pinneds]
+        result = []
+        for i, (path, mtime) in enumerate(zip(paths, mtimes)):
+            try:
+                m = float(mtime)
+            except (TypeError, ValueError):
+                m = 0.0
+            # Refresh from filesystem when possible so ordering reflects real
+            # modified time, not only the previously-saved snapshot.
+            try:
+                if os.path.isfile(path):
+                    m = float(os.path.getmtime(path))
+            except OSError:
+                pass
+            try:
+                p = str(pinneds[i]).lower() == "true" if i < len(pinneds) else False
+            except Exception:
+                p = False
+            result.append({"path": str(path), "mtime": m, "pinned": p})
+        result.sort(key=lambda e: float(e.get("mtime", 0.0) or 0.0), reverse=True)
+        return result
+
+    def remove_recent_project(self, path: str) -> None:
+        """Remove *path* from the recent list."""
+        path = os.path.normpath(os.path.abspath(path))
+        entries = [
+            e for e in self.get_recent_projects()
+            if os.path.normpath(e["path"]) != path
+        ]
+        self._save_entries(entries)
+
+    def toggle_pin_project(self, path: str, pinned: bool) -> None:
+        """Set the pinned flag for *path* and persist."""
+        path = os.path.normpath(os.path.abspath(path))
+        entries = self.get_recent_projects()
+        for e in entries:
+            if os.path.normpath(e["path"]) == path:
+                e["pinned"] = pinned
+                break
+        self._save_entries(entries)
+
+    def clear_recent_projects(self) -> None:
+        """Wipe the entire recent list."""
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup("recent_projects")
+        settings.remove("")
+        settings.endGroup()
+
+    @staticmethod
+    def _save_entries(entries: list) -> None:
+        """Write the full entries list to QSettings."""
+        settings = QSettings("ComicLabs", "ComicTranslate")
+        settings.beginGroup("recent_projects")
+        settings.setValue("paths",  [e["path"]           for e in entries])
+        settings.setValue("mtimes", [e["mtime"]          for e in entries])
+        settings.setValue("pinned", [e.get("pinned", False) for e in entries])
+        settings.endGroup()
+
+    def initialize_autosave(self):
+        # Restore persisted auto-save toggle state as a single source of truth.
+        persisted_enabled = self._read_autosave_enabled_setting()
+        self.main.title_bar.set_autosave_checked(persisted_enabled)
+
+        if self._autosave_signals_connected:
+            self._apply_autosave_settings()
+            return
+
+        self.main.title_bar.autosave_switch.toggled.connect(self._on_autosave_setting_changed)
+        self.main.settings_page.ui.project_autosave_interval_spinbox.valueChanged.connect(
+            self._on_autosave_setting_changed
+        )
+        self._autosave_signals_connected = True
+        self._apply_autosave_settings()
+
+    def _on_autosave_setting_changed(self, *_):
+        autosave_enabled = bool(self.main.title_bar.autosave_switch.isChecked())
+
+        # Defer auto-generating a project file until the user has actually
+        # entered the workspace (not startup home) and loaded/started pages.
+        self._ensure_autosave_project_file_if_needed()
+
+        # Persist this key directly and sync so it is independent of UI widget
+        # availability/order during shutdown.
+        try:
+            self._write_autosave_enabled_setting(autosave_enabled)
+        except Exception:
+            logger.debug("Failed to persist autosave toggle directly.", exc_info=True)
+
+        self._apply_autosave_settings()
+
+    def _apply_autosave_settings(self):
+        export_settings = self.main.settings_page.get_export_settings()
+        interval_min = int(export_settings.get("project_autosave_interval_min", 3) or 3)
+        interval_min = max(1, min(interval_min, 120))
+
+        self._autosave_timer.setInterval(interval_min * 60 * 1000)
+        # Crash recovery snapshots remain interval-based.
+        self._autosave_timer.start()
+
+    def _is_startup_home_visible(self) -> bool:
+        try:
+            center_stack = self.main._center_stack
+            home_screen = self.main.startup_home
+            if center_stack is not None and home_screen is not None:
+                return center_stack.currentWidget() is home_screen
+        except Exception:
+            pass
+        return False
+
+    def _ensure_autosave_project_file_if_needed(self, require_images: bool = True) -> None:
+        autosave_enabled = bool(
+            self.main.settings_page.get_export_settings().get("project_autosave_enabled", False)
+        )
+        if not autosave_enabled or self.main.project_file:
+            return
+        if require_images and not self.main.image_files:
+            return
+        # Avoid creating a "rogue" auto-save file on plain startup before user intent.
+        if self._is_startup_home_visible():
+            return
+
+        generated_project_file = self._generate_autosave_project_file_path()
+        self.main.project_file = generated_project_file
+        self.main.setWindowTitle(f"{os.path.basename(generated_project_file)}[*]")
+
+    def ensure_autosave_project_file_for_new_project(self) -> None:
+        """Create an auto-save project file after explicit New Project intent."""
+        self._ensure_autosave_project_file_if_needed(require_images=False)
+
+    def shutdown_autosave(self, clear_recovery: bool = True):
+        try:
+            self._autosave_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._realtime_autosave_timer.stop()
+        except Exception:
+            pass
+        close_state_store()
+        if clear_recovery:
+            self.clear_recovery_checkpoint()
+
+    def _autosave_dir(self) -> str:
+        return os.path.join(get_user_data_dir(), "autosave")
+
+    def _recovery_project_path(self) -> str:
+        return os.path.join(self._autosave_dir(), "project_recovery.ctpr")
+
+    def _configured_project_autosave_dir(self) -> str:
+        export_settings = self.main.settings_page.get_export_settings()
+        configured_folder = str(export_settings.get("project_autosave_folder", "") or "").strip()
+        if configured_folder:
+            return configured_folder
+        return get_default_project_autosave_dir()
+
+    def _generate_autosave_project_file_path(self) -> str:
+        autosave_dir = self._configured_project_autosave_dir()
+        try:
+            os.makedirs(autosave_dir, exist_ok=True)
+        except Exception:
+            logger.warning("Failed to create configured auto-save folder: %s", autosave_dir)
+            autosave_dir = self._autosave_dir()
+            os.makedirs(autosave_dir, exist_ok=True)
+
+        base_name = "project"
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = os.path.join(autosave_dir, f"{base_name}_{timestamp}.ctpr")
+        if not os.path.exists(candidate):
+            return candidate
+
+        for seq in range(1, 1000):
+            seq_candidate = os.path.join(autosave_dir, f"{base_name}_{timestamp}_{seq:03d}.ctpr")
+            if not os.path.exists(seq_candidate):
+                return seq_candidate
+
+        # Extremely unlikely fallback; keeps behavior deterministic if all sequence
+        # slots are exhausted for the same timestamp.
+        fallback_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return os.path.join(autosave_dir, f"{base_name}_{fallback_timestamp}.ctpr")
+
+    def clear_recovery_checkpoint(self):
+        recovery_file = self._recovery_project_path()
+        if os.path.exists(recovery_file):
+            try:
+                os.remove(recovery_file)
+            except Exception:
+                logger.debug("Failed to remove recovery project file: %s", recovery_file)
+
+    def _on_autosave_timeout(self):
+        # Interval timer is reserved for recovery checkpoints.
+        self.autosave_project(prefer_project_file=False)
+
+    def _on_realtime_autosave_timeout(self):
+        # Real-time autosave writes directly to the open project file.
+        self.autosave_project(prefer_project_file=True)
+
+    def _on_batch_page_done(self, image_path: str):
+        """Triggered by render_state_ready after each page is processed during batch.
+        Saves the project file immediately so progress is not lost between pages.
+
+        NOTE: this deliberately bypasses the task_runner_ctrl queue (which is
+        blocked while the batch is running) and avoids touching current_worker
+        (which the batch processor uses for cancel detection). A GenericWorker
+        is started directly on the shared threadpool instead.
+        """
+        autosave_enabled = bool(
+            self.main.settings_page.get_export_settings().get("project_autosave_enabled", False)
+        )
+        if not autosave_enabled or not self.main.project_file:
+            return
+        if self._autosave_save_pending:
+            # A save is already in flight; request a follow-up once it finishes.
+            self._autosave_retrigger_requested = True
+            return
+
+        autosave_start_revision = self.main._dirty_revision
+        self._autosave_save_pending = True
+        target_file = self.main.project_file
+
+        worker = GenericWorker(self.save_project, target_file)
+        self._active_save_workers.append(worker)  # prevent GC until done
+
+        def on_error(error_tuple):
+            try:
+                self._active_save_workers.remove(worker)
+            except ValueError:
+                pass
+            self._autosave_save_pending = False
+            exctype, value, _ = error_tuple
+            logger.warning("Per-page autosave failed for %s: %s: %s", image_path, exctype.__name__, value)
+            if self._autosave_retrigger_requested:
+                self._autosave_retrigger_requested = False
+                self._on_batch_page_done(image_path)
+
+        def on_finished():
+            try:
+                self._active_save_workers.remove(worker)
+            except ValueError:
+                pass
+            self._autosave_save_pending = False
+            self.clear_recovery_checkpoint()
+            self.add_recent_project(target_file)
+            self._refresh_home_screen()
+            if self.main._dirty_revision == autosave_start_revision:
+                self.main.set_project_clean()
+            if self._autosave_retrigger_requested:
+                self._autosave_retrigger_requested = False
+                self._on_batch_page_done(image_path)
+
+        worker.signals.error.connect(
+            lambda err: QtCore.QTimer.singleShot(0, lambda: on_error(err))
+        )
+        worker.signals.finished.connect(
+            lambda: QtCore.QTimer.singleShot(0, on_finished)
+        )
+        self.main.threadpool.start(worker)
+
+    def notify_project_dirty_revision_changed(self):
+        autosave_enabled = bool(
+            self.main.settings_page.get_export_settings().get("project_autosave_enabled", False)
+        )
+        if not autosave_enabled:
+            return
+        self._ensure_autosave_project_file_if_needed()
+        # Debounce bursts of edits (typing, drag, rapid undo/redo).
+        # If no project file exists yet, autosave_project() falls back to
+        # the recovery checkpoint path.
+        self._realtime_autosave_timer.start()
+
+    def autosave_project(self, prefer_project_file: bool = True):
+        if self._autosave_save_pending:
+            if prefer_project_file:
+                self._autosave_retrigger_requested = True
+            return
+        if not self.main.image_files:
+            return
+        if getattr(self.main, "_batch_active", False):
+            return
+
+        # Flush pending text-edit command batching so autosave captures the latest edits.
+        try:
+            self.main.text_ctrl._commit_pending_text_command()
+        except Exception:
+            pass
+
+        if not self.main.has_unsaved_changes():
+            return
+
+        self.save_current_state()
+
+        autosave_enabled = bool(
+            self.main.settings_page.get_export_settings().get("project_autosave_enabled", False)
+        )
+        self._ensure_autosave_project_file_if_needed()
+        use_project_file = bool(prefer_project_file and autosave_enabled and self.main.project_file)
+        target_file = self.main.project_file if use_project_file else self._recovery_project_path()
+        if not target_file:
+            return
+
+        is_regular_project_save = bool(self.main.project_file and target_file == self.main.project_file)
+        autosave_start_revision = self.main._dirty_revision
+        self._autosave_save_pending = True
+
+        def on_error(error_tuple):
+            self._autosave_save_pending = False
+            exctype, value, _ = error_tuple
+            logger.warning("Project autosave failed: %s: %s", exctype.__name__, value)
+            if self._autosave_retrigger_requested:
+                self._autosave_retrigger_requested = False
+                self._realtime_autosave_timer.start()
+
+        def on_finished():
+            self._autosave_save_pending = False
+            if is_regular_project_save:
+                self.clear_recovery_checkpoint()
+                self.add_recent_project(target_file)
+                self._refresh_home_screen()
+                if self.main._dirty_revision == autosave_start_revision:
+                    self.main.set_project_clean()
+            if self._autosave_retrigger_requested or (
+                is_regular_project_save and self.main.has_unsaved_changes()
+            ):
+                self._autosave_retrigger_requested = False
+                self._realtime_autosave_timer.start()
+
+        self.main.run_threaded(self.save_project, None, on_error, on_finished, target_file)
+
+    def prompt_restore_recovery_if_available(self) -> bool:
+        if self.main.image_files:
+            return False
+
+        recovery_file = self._recovery_project_path()
+        if not os.path.exists(recovery_file):
+            return False
+
+        saved_at = datetime.fromtimestamp(os.path.getmtime(recovery_file)).strftime("%Y-%m-%d %H:%M:%S")
+
+        msg_box = QtWidgets.QMessageBox(self.main)
+        msg_box.setIcon(QtWidgets.QMessageBox.Question)
+        msg_box.setWindowTitle(self.main.tr("Project Recovery"))
+        msg_box.setText(self.main.tr("An autosaved project from a previous session was found."))
+        msg_box.setInformativeText(
+            self.main.tr("Last autosave: {saved_at}\nDo you want to restore it?").format(saved_at=saved_at)
+        )
+        restore_btn = msg_box.addButton(self.main.tr("Restore"), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        discard_btn = msg_box.addButton(self.main.tr("Discard"), QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        msg_box.setDefaultButton(restore_btn)
+        msg_box.exec()
+
+        if msg_box.clickedButton() == restore_btn:
+            self.restore_recovery_project(recovery_file)
+            return True
+
+        if msg_box.clickedButton() == discard_btn:
+            self.clear_recovery_checkpoint()
+
+        return False
+
+    def restore_recovery_project(self, recovery_file: str | None = None):
+        recovery_file = recovery_file or self._recovery_project_path()
+        if not os.path.exists(recovery_file):
+            return
+
+        self.main.image_ctrl.clear_state()
+        self.main.setWindowTitle(f"{self.main.tr('RecoveredProject.ctpr')}[*]")
+
+        load_failed = {"value": False}
+
+        def on_error(error_tuple):
+            load_failed["value"] = True
+            self.main.default_error_handler(error_tuple)
+
+        def on_finished():
+            if load_failed["value"]:
+                return
+            self.update_ui_from_project()
+            # Keep recovered data as an unsaved project so users can choose a destination.
+            self.main.project_file = None
+            self.main.setWindowTitle(f"{self.main.tr('RecoveredProject.ctpr')}[*]")
+            self.main.mark_project_dirty()
+            self.clear_recovery_checkpoint()
+
+        self.main.run_threaded(
+            self.load_project,
+            self.load_state_to_ui,
+            on_error,
+            on_finished,
+            recovery_file,
+        )
 
     def save_and_make(self, output_path: str):
-        self.main.run_threaded(self.save_and_make_worker, None, self.main.default_error_handler, None, output_path)
+        self.main.loading.setVisible(True)
+        self.main.run_threaded(
+            self.save_and_make_worker,
+            None,
+            self.main.default_error_handler,
+            lambda: self.main.loading.setVisible(False),
+            output_path,
+        )
 
     def save_and_make_worker(self, output_path: str):
         self.main.image_ctrl.save_current_image_state()
+        all_pages_current_state = self._build_all_pages_current_state()
+        try:
+            if self.main.file_handler.should_pre_materialize(self.main.image_files):
+                count = self.main.file_handler.pre_materialize(self.main.image_files)
+                logger.info("Export pre-materialized %d paths before save-and-make.", count)
+        except Exception:
+            logger.debug("Export pre-materialization failed; continuing lazily.", exc_info=True)
         temp_dir = tempfile.mkdtemp()
         try:            
+            temp_main_page_context = None
             if self.main.webtoon_mode:
-                #  PASS 1: Pre-build a complete, up-to-date state map for ALL pages
-                all_pages_current_state = {}
-                loaded_pages = self.main.image_viewer.webtoon_manager.loaded_pages
+                temp_main_page_context = type('TempMainPage', (object,), {
+                    'image_files': self.main.image_files,
+                    'image_states': all_pages_current_state
+                })()
 
-                for page_idx, file_path in enumerate(self.main.image_files):
-                    if page_idx in loaded_pages:
-                        # For loaded pages, create state from the live scene. This state will
-                        # only contain items that "belong" to this page.
-                        viewer_state = self._create_text_items_state_from_scene(page_idx)
-                    else:
-                        # For unloaded pages, use the already stored state.
-                        viewer_state = self.main.image_states[file_path].get('viewer_state', {}).copy()
-                    all_pages_current_state[file_path] = {'viewer_state': viewer_state}
+            for page_idx, file_path in enumerate(self.main.image_files):
+                bname = os.path.basename(file_path)
+                rgb_img = self.main.load_image(file_path)
+                renderer = ImageSaveRenderer(rgb_img)
+                viewer_state = all_pages_current_state[file_path]['viewer_state']
 
-                # PASS 2: Render each page using the complete state map
-                for page_idx, file_path in enumerate(self.main.image_files):
-                    bname = os.path.basename(file_path)
-                    rgb_img = self.main.load_image(file_path)
-
-                    renderer = ImageSaveRenderer(rgb_img)
-                    
-                    # Use the pre-built, up-to-date state for this page.
-                    viewer_state = all_pages_current_state[file_path]['viewer_state']
-                    
-                    # Create a temporary context object for the renderer.
-                    temp_main_page_context = type('TempMainPage', (object,), {
-                        'image_files': self.main.image_files,
-                        'image_states': all_pages_current_state
-                    })()
-
-                    renderer.apply_patches(self.main.image_patches.get(file_path, []))
+                renderer.apply_patches(self.main.image_patches.get(file_path, []))
+                if self.main.webtoon_mode and temp_main_page_context is not None:
                     renderer.add_state_to_image(viewer_state, page_idx, temp_main_page_context)
-                    sv_pth = os.path.join(temp_dir, bname)
-                    renderer.save_image(sv_pth)
-            else:
-                # Regular mode: use original logic
-                for file_path in self.main.image_files:
-                    bname = os.path.basename(file_path)
-                    rgb_img = self.main.load_image(file_path)
-
-                    renderer = ImageSaveRenderer(rgb_img)
-                    viewer_state = self.main.image_states[file_path]['viewer_state']
-                    renderer.apply_patches(self.main.image_patches.get(file_path, []))
+                else:
                     renderer.add_state_to_image(viewer_state)
-                    sv_pth = os.path.join(temp_dir, bname)
-                    renderer.save_image(sv_pth)
+
+                sv_pth = os.path.join(temp_dir, bname)
+                renderer.save_image(sv_pth)
 
             # Call make function
             make(temp_dir, output_path)
         finally:
             # Clean up temp directory
             shutil.rmtree(temp_dir)
+
+    def _build_all_pages_current_state(self) -> dict[str, dict]:
+        all_pages_current_state: dict[str, dict] = {}
+
+        if self.main.webtoon_mode:
+            loaded_pages = self.main.image_viewer.webtoon_manager.loaded_pages
+            for page_idx, file_path in enumerate(self.main.image_files):
+                if page_idx in loaded_pages:
+                    viewer_state = self._create_text_items_state_from_scene(page_idx)
+                else:
+                    viewer_state = self.main.image_states.get(file_path, {}).get('viewer_state', {}).copy()
+                all_pages_current_state[file_path] = {'viewer_state': viewer_state}
+            return all_pages_current_state
+
+        for file_path in self.main.image_files:
+            viewer_state = self.main.image_states.get(file_path, {}).get('viewer_state', {}).copy()
+            all_pages_current_state[file_path] = {'viewer_state': viewer_state}
+
+        return all_pages_current_state
 
     def _create_text_items_state_from_scene(self, page_idx: int) -> dict:
         """
@@ -144,11 +610,15 @@ class ProjectController:
         return file_name
 
     def run_save_proj(self, file_name, post_save_callback=None):
+        prev_project_file = self.main.project_file
+        if prev_project_file and prev_project_file != file_name:
+            close_state_store(prev_project_file)
         self.main.project_file = file_name
         self.main.setWindowTitle(f"{os.path.basename(file_name)}[*]")
         self.main.loading.setVisible(True)
         self.main.disable_hbutton_group()
         save_failed = {'value': False}
+        save_start_revision = self.main._dirty_revision
 
         def on_error(error_tuple):
             save_failed['value'] = True
@@ -157,7 +627,11 @@ class ProjectController:
         def on_finished():
             self.main.on_manual_finished()
             if not save_failed['value']:
-                self.main.set_project_clean()
+                if self.main._dirty_revision == save_start_revision:
+                    self.main.set_project_clean()
+                self.clear_recovery_checkpoint()
+                self.add_recent_project(file_name)
+                self._refresh_home_screen()
                 if post_save_callback:
                     post_save_callback()
 
@@ -196,7 +670,15 @@ class ProjectController:
         save_state_to_proj_file(self.main, file_name)
 
     def update_ui_from_project(self):
+        if not self.main.image_files:
+            self.main.curr_img_idx = -1
+            self.main.central_stack.setCurrentWidget(self.main.drag_browser)
+            return
+
         index = self.main.curr_img_idx
+        if not (0 <= index < len(self.main.image_files)):
+            index = 0
+            self.main.curr_img_idx = 0
         self.main.image_ctrl.update_image_cards()
 
         # highlight the row that matches the current image
@@ -209,6 +691,7 @@ class ProjectController:
         for file in self.main.image_files:
             stack = QUndoStack(self.main)
             stack.cleanChanged.connect(self.main._update_window_modified)
+            stack.indexChanged.connect(self.main._bump_dirty_revision)
             self.main.undo_stacks[file] = stack
             self.main.undo_group.addStack(stack)
 
@@ -229,18 +712,63 @@ class ProjectController:
             self.main.webtoon_ctrl.switch_to_webtoon_mode()
         self.main.set_project_clean()
 
-    def thread_load_project(self, file_name: str):
+    def _refresh_home_screen(self) -> None:
+        """Repopulate the home screen recent list if it is currently visible."""
+        home = self.main.startup_home
+        if home is None:
+            return
+        home.populate(self.get_recent_projects())
+
+    def thread_load_project(self, file_name: str, clear_recovery: bool = True):
+        normalized_path = os.path.normpath(os.path.abspath(file_name))
+        if not os.path.isfile(normalized_path):
+            self.remove_recent_project(normalized_path)
+            self._refresh_home_screen()
+            self.main.setWindowTitle("Project1.ctpr[*]")
+            self.main.project_file = None
+            QtWidgets.QMessageBox.warning(
+                self.main,
+                self.main.tr("Project Not Found"),
+                self.main.tr(
+                    "The selected project file could not be found.\n"
+                    "It may have been moved, renamed, or deleted.\n\n{path}"
+                ).format(path=normalized_path),
+            )
+            return
+
+        prev_project_file = self.main.project_file
+        if prev_project_file and prev_project_file != normalized_path:
+            close_state_store(prev_project_file)
+        if clear_recovery:
+            self.clear_recovery_checkpoint()
         self.main.image_ctrl.clear_state()
-        self.main.setWindowTitle(f"{os.path.basename(file_name)}[*]")
+        self.main.setWindowTitle(f"{os.path.basename(normalized_path)}[*]")
+
+        def _on_load_finished():
+            self.add_recent_project(normalized_path)
+            self._refresh_home_screen()
+            self.update_ui_from_project()
+
+        def _on_load_error(error_tuple):
+            self.main.default_error_handler(error_tuple)
+            exctype, value, _ = error_tuple
+            self.main.project_file = None
+            self.main.setWindowTitle("Project1.ctpr[*]")
+            if exctype is FileNotFoundError or isinstance(value, FileNotFoundError):
+                self.remove_recent_project(normalized_path)
+                self._refresh_home_screen()
+
         self.main.run_threaded(
-            self.load_project, 
+            self.load_project,
             self.load_state_to_ui,
-            self.main.default_error_handler, 
-            self.update_ui_from_project, 
-            file_name
+            _on_load_error,
+            _on_load_finished,
+            normalized_path
         )
 
     def load_project(self, file_name):
+        if not os.path.isfile(file_name):
+            raise FileNotFoundError(file_name)
         self.main.project_file = file_name
         return load_state_from_proj_file(self.main, file_name)
     
