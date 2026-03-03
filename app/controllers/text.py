@@ -132,7 +132,20 @@ class TextController:
         underline = render_settings.underline
         direction = render_settings.direction
         vertical = is_vertical_block(blk, trg_lng_cd)
-
+        
+        '''
+        blk_width = blk.xyxy[2] - blk.xyxy[0]
+        blk_height = blk.xyxy[3] - blk.xyxy[1]
+        item_rect = text_item.boundingRect()
+        centered_x = blk.xyxy[0] + (blk_width - item_rect.width()) / 2
+        centered_y = blk.xyxy[1] + (blk_height - item_rect.height()) / 2
+        blk.xyxy[:] = (
+            centered_x,
+            centered_y,
+            centered_x + blk_width,
+            centered_y + blk_height
+        ) 
+        '''
         properties = TextItemProperties(
             text=text,
             font_family=font_family,

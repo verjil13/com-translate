@@ -480,19 +480,28 @@ class BatchProcessor:
                 # центрирование внутри исходного блока
                 new_x1 = x1 + (width - text_w) // 2
                 new_y1 = y1 + (height - text_h) // 2
-                new_x2 = new_x1 + text_w
-                new_y2 = new_y1 + text_h
+                #new_x2 = new_x1 + text_w
+                #new_y2 = new_y1 + text_h
                 
                 x1 = new_x1
                 y1 = new_y1
-                width = new_x2                
-                height = new_x2
+                width = text_w#new_x2                
+                height = text_h#new_x2
+                blk.xyxy[:] = (
+                    new_x1,
+                    new_y1,
+                    new_x1 + text_w,
+                    new_y1 + text_h
+                )           
                 ##################
+                
+                #if image_path == file_on_display:
+                #    self.main_page.blk_list = blk_list
                 
                 # Display text if on current page  
                 if image_path == file_on_display:
                     self.main_page.blk_rendered.emit(translation, font_size, blk, image_path)
-
+                
                 # Language-specific formatting for state storage
                 if is_no_space_lang(trg_lng_cd):
                     translation = translation.replace(' ', '')
