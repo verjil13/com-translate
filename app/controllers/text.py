@@ -132,20 +132,7 @@ class TextController:
         underline = render_settings.underline
         direction = render_settings.direction
         vertical = is_vertical_block(blk, trg_lng_cd)
-        
-        '''
-        blk_width = blk.xyxy[2] - blk.xyxy[0]
-        blk_height = blk.xyxy[3] - blk.xyxy[1]
-        item_rect = text_item.boundingRect()
-        centered_x = blk.xyxy[0] + (blk_width - item_rect.width()) / 2
-        centered_y = blk.xyxy[1] + (blk_height - item_rect.height()) / 2
-        blk.xyxy[:] = (
-            centered_x,
-            centered_y,
-            centered_x + blk_width,
-            centered_y + blk_height
-        ) 
-        '''
+
         properties = TextItemProperties(
             text=text,
             font_family=font_family,
@@ -177,11 +164,18 @@ class TextController:
         self._last_item_html[text_item] = text_item.document().toHtml()
 
         x1, y1 = int(text_item.pos().x()), int(text_item.pos().y())
-        rotation = text_item.rotation()
-
+        rotation = text_item.rotation()   
+        
+        #fix translation display
+        image_path = self.main.image_files[self.main.curr_img_idx]
+        blk_list = self.main.image_states[image_path].get('blk_list', [])
+        self.main.blk_list = blk_list
+        
+        self.main.curr_tblock = None
+        
         self.main.curr_tblock = next(
-            (
-            blk for blk in self.main.blk_list
+            (            
+            blk for blk in self.main.blk_list            
             if is_close(blk.xyxy[0], x1, 5) and is_close(blk.xyxy[1], y1, 5)
             and is_close(blk.angle, rotation, 1)
             ),
