@@ -493,7 +493,9 @@ class BatchProcessor:
                 )   
 
                 # Display text if on current page  
-                if image_path == file_on_display:
+                #if image_path == file_on_display:
+                if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:
+                    self.main_page.blk_list = blk_list        
                     self.main_page.blk_rendered.emit(translation, font_size, blk, image_path)
                 
                 # Language-specific formatting for state storage
@@ -555,7 +557,8 @@ class BatchProcessor:
             # during processing and misses live blk_rendered events.
             self.main_page.render_state_ready.emit(image_path)
 
-            if image_path == file_on_display:
+            #if image_path == file_on_display:
+            if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:
                 self.main_page.blk_list = blk_list
 
             self.emit_progress(index, total_images, 10, 10, False)
