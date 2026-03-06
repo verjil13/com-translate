@@ -166,16 +166,15 @@ class TextController:
         x1, y1 = int(text_item.pos().x()), int(text_item.pos().y())
         rotation = text_item.rotation()   
         
-        #fix translation display
-        image_path = self.main.image_files[self.main.curr_img_idx]
-        blk_list = self.main.image_states[image_path].get('blk_list', [])
-        self.main.blk_list = blk_list
+        #fix raw display        
+        current_file = self.main.image_files[self.main.curr_img_idx]
         
-        self.main.curr_tblock = None
-        
+        blklist = self.main.image_states[current_file].get("blk_list", [])
+        self.main.blk_list = blklist       
+                
         self.main.curr_tblock = next(
             (            
-            blk for blk in self.main.blk_list            
+            blk for blk in blklist #self.main.blk_list            
             if is_close(blk.xyxy[0], x1, 5) and is_close(blk.xyxy[1], y1, 5)
             and is_close(blk.angle, rotation, 1)
             ),

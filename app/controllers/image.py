@@ -906,17 +906,22 @@ class ImageStateController:
         imk.write_image(file_path, final_rgb)
 
     def save_image_state(self, file: str):
-        # For regular mode only
-        skip_status = self.main.image_states.get(file, {}).get('skip', False)
+        skip_status = self.main.image_states.get(file, {}).get('skip', False)    
+        stored_blk_list = self.main.image_states.get(file, {}).get('blk_list')    
+        if not stored_blk_list:   # None или []
+            blk_list = self.main.blk_list.copy()
+        else:
+            blk_list = stored_blk_list
+    
         self.main.image_states[file] = {
             'viewer_state': self.main.image_viewer.save_state(),
             'source_lang': self.main.s_combo.currentText(),
             'target_lang': self.main.t_combo.currentText(),
             'brush_strokes': self.main.image_viewer.save_brush_strokes(),
-            'blk_list': self.main.blk_list.copy(),  # Store a copy of the list, not a reference
+            'blk_list': blk_list,
             'skip': skip_status,
         }
-
+    
     def save_current_image_state(self):
         if self.main.curr_img_idx >= 0:
             current_file = self.main.image_files[self.main.curr_img_idx]
