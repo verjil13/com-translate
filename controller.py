@@ -3,12 +3,6 @@ import requests
 import numpy as np
 import shutil
 import tempfile
-import re
-import regex as ure
-import logging
-import unicodedata
-from typing import List
-
 from typing import Callable, Tuple
 
 from PySide6 import QtCore, QtWidgets
@@ -391,7 +385,7 @@ class ComicTranslate(ComicTranslateUI):
                 self.blk_list,
             )
             self.undo_group.activeStack().push(command)
-            
+
     def batch_mode_selected(self):
         self.disable_hbutton_group()
         self.translate_button.setEnabled(True)
