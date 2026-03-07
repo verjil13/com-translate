@@ -478,6 +478,7 @@ class ManualWorkflowController:
 
                 vertical = is_vertical_block(blk, trg_lng_cd)
                 wrap_args = (
+                    self.main.blk_list, #
                     blk.translation,
                     text_item.font_family,
                     blk.xyxy[2] - blk.xyxy[0],
