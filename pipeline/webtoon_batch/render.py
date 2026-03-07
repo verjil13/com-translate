@@ -117,9 +117,10 @@ class RenderMixin:
             (
                 wrapped_translation,
                 font_size,
-                rendered_width,
-                rendered_height,
+                #rendered_width,
+                #rendered_height,
             ) = pyside_word_wrap(
+                blocks,
                 translation,
                 font,
                 width,
@@ -134,11 +135,29 @@ class RenderMixin:
                 max_font_size,
                 min_font_size,
                 vertical,
-                return_metrics=True,
+                #return_metrics=True,
             )
 
             if is_no_space_lang(target_lang_code):
                 wrapped_translation = wrapped_translation.replace(" ", "")
+                
+            ####
+            '''
+            font1 = QFont(font, font_size)
+            font1.setBold(bold)
+            font1.setItalic(italic)
+            font1.setUnderline(underline)
+            metrics = QFontMetrics(font1)
+            text_lines = wrapped_translation.split("\n")
+            text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
+            text_h = metrics.height() * len(text_lines)  # высота всего текста
+            # центрирование внутри исходного блока
+            x1 = x1 + (width - text_w) // 2
+            x1 = y1 + (height - text_h) // 2
+            new_x2 = x1 + text_w
+            new_y2 = y1 + text_h
+            block.xyxy[:] = [x1, y1, new_x2, new_y2]  
+            '''        
 
             font_color = get_smart_text_color(block.font_color, base_font_color)
             if should_emit_live:
@@ -171,8 +190,8 @@ class RenderMixin:
                 rotation=block.angle,
                 scale=1.0,
                 transform_origin=block.tr_origin_point if block.tr_origin_point else (0, 0),
-                width=rendered_width,
-                height=rendered_height,
+                width=width, #rendered_width,
+                height=height, #rendered_width,
                 direction=direction,
                 vertical=vertical,
                 selection_outlines=[
