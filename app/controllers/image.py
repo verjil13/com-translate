@@ -1021,7 +1021,7 @@ class ImageStateController:
             file,
             self.main.image_viewer.save_state(),
             self.main.image_viewer.save_brush_strokes(),
-            self.main.blk_list.copy(),
+            blk_list,
             skip_status,
         )
     def save_current_image_state(self):
