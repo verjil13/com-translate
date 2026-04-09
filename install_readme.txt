@@ -4,6 +4,8 @@ conda activate .\env
 conda activate H:\MyComicsTranslate\com-translate\env
 pip install -r requirements.txt
 
+"%ENV_PATH%\python.exe" -m pip install send2trash
+
 for GPU
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 conda install -c nvidia cuda-nvrtc=12.9.86 cuda=12.9 cudnn=9.14.0.64
