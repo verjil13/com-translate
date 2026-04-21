@@ -366,15 +366,6 @@ def pyside_word_wrap(
     wrapped_text, _ = wrap_text(text, font_for_measure)
     return wrapped_text, min_font_size
 '''
-from typing import List
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
-
-
-from typing import List
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
-
 
 def pyside_word_wrap( 
     blk_list: List["TextBlock"], 
@@ -428,7 +419,7 @@ def pyside_word_wrap(
 
     # --- разрез длинного слова (1 раз) ---
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
-        if metrics.horizontalAdvance(word) <= adjusted_width * 1.7:
+        if metrics.horizontalAdvance(word) <= adjusted_width * 1.5:
             return [word]
 
         best_i = 0
@@ -469,7 +460,7 @@ def pyside_word_wrap(
         # =========================
         words = []
         for w in words_raw:
-            if metrics.horizontalAdvance(w) > adjusted_width * 1.7:
+            if metrics.horizontalAdvance(w) > adjusted_width * 1.5:
                 words.extend(split_single_word(w, metrics))
             else:
                 words.append(w)
@@ -480,10 +471,10 @@ def pyside_word_wrap(
         word_widths = [metrics.horizontalAdvance(w) for w in words]
         max_word_width = max(word_widths)
 
-        target_width = min(max_word_width * 1.4, adjusted_width)
+        target_width = min(max_word_width*1.1, 1.5*adjusted_width)
 
         avg_char = max(1, metrics.horizontalAdvance("W"))
-        short_threshold = avg_char * 1.2
+        short_threshold = avg_char * 1.1
 
         lines = []
         current = ""
