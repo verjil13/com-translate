@@ -419,7 +419,7 @@ def pyside_word_wrap(
 
     # --- разрез длинного слова (1 раз) ---
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
-        if metrics.horizontalAdvance(word) <= adjusted_width * 1.5:
+        if metrics.horizontalAdvance(word) <= adjusted_width * 1.3:
             return [word]
 
         best_i = 0
@@ -432,11 +432,11 @@ def pyside_word_wrap(
             left_w = metrics.horizontalAdvance(left)
             right_w = metrics.horizontalAdvance(right)
 
-            if left_w <= adjusted_width:
-                diff = abs(left_w - right_w)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_i = i
+            #if left_w <= adjusted_width:
+            diff = abs(left_w - right_w)
+            if diff < best_diff:
+                best_diff = diff
+                best_i = i
 
         if best_i == 0:
             for i in range(len(word), 0, -1):
@@ -460,7 +460,7 @@ def pyside_word_wrap(
         # =========================
         words = []
         for w in words_raw:
-            if metrics.horizontalAdvance(w) > adjusted_width * 1.5:
+            if metrics.horizontalAdvance(w) > adjusted_width * 1.3:
                 words.extend(split_single_word(w, metrics))
             else:
                 words.append(w)
@@ -471,7 +471,7 @@ def pyside_word_wrap(
         word_widths = [metrics.horizontalAdvance(w) for w in words]
         max_word_width = max(word_widths)
 
-        target_width = min(max_word_width*1.1, 1.5*adjusted_width)
+        target_width = min(max_word_width*1.1, 1.3*adjusted_width)
 
         avg_char = max(1, metrics.horizontalAdvance("W"))
         short_threshold = avg_char * 1.1
