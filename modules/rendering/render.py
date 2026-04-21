@@ -177,7 +177,7 @@ def get_best_render_area(
 
 
     return blk_list
-
+'''
 def pyside_word_wrap(
     blk_list: List[TextBlock],
     text: str,
@@ -365,7 +365,203 @@ def pyside_word_wrap(
     font_for_measure = prepare_font(min_font_size)
     wrapped_text, _ = wrap_text(text, font_for_measure)
     return wrapped_text, min_font_size
+'''
+from typing import List
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 
+
+from typing import List
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+
+
+def pyside_word_wrap( 
+    blk_list: List["TextBlock"], 
+    text: str, font_input: str, 
+    roi_width: int, roi_height: int, 
+    line_spacing=1.0, 
+    outline_width=0.0, 
+    bold=False, 
+    italic=False, 
+    underline=False, 
+    alignment=Qt.AlignLeft, 
+    direction=Qt.LeftToRight, 
+    max_font_size: int = 40,
+    min_font_size: int = 10, 
+    vertical: bool = False, 
+    width_coef: float = 1.2, 
+    height_coef: float = 1.1,
+) -> tuple[str, int]:
+
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    if not text:
+        return "", min_font_size
+
+    text = str(text).strip()
+    if not text:
+        return "", min_font_size
+
+    # --- адаптация под язык ---
+    if blk_list and getattr(blk_list[0], "source_lang", None) in ['ko', 'zh', 'ja']:
+        adjusted_width = roi_width * width_coef
+        adjusted_height = roi_height * height_coef
+    else:
+        adjusted_width = roi_width
+        adjusted_height = roi_height
+
+    # --- font ---
+    def prepare_font(size: int) -> QFont:
+        family = font_input.strip() if isinstance(font_input, str) and font_input.strip() else QApplication.font().family()
+        font = QFont(family, size)
+        font.setBold(bold)
+        font.setItalic(italic)
+        font.setUnderline(underline)
+        return font
+
+    def get_height(metrics: QFontMetrics, wrapped: str) -> int:
+        lines = wrapped.split("\n")
+        if not lines:
+            return 0
+        return int(metrics.height() * len(lines) * line_spacing)
+
+    # --- разрез длинного слова (1 раз) ---
+    def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
+        if metrics.horizontalAdvance(word) <= adjusted_width * 1.7:
+            return [word]
+
+        best_i = 0
+        best_diff = float("inf")
+
+        for i in range(1, len(word)):
+            left = word[:i]
+            right = word[i:]
+
+            left_w = metrics.horizontalAdvance(left)
+            right_w = metrics.horizontalAdvance(right)
+
+            if left_w <= adjusted_width:
+                diff = abs(left_w - right_w)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_i = i
+
+        if best_i == 0:
+            for i in range(len(word), 0, -1):
+                if metrics.horizontalAdvance(word[:i]) <= adjusted_width:
+                    best_i = i
+                    break
+
+        return [word[:best_i] + "-", word[best_i:]]
+
+    # --- wrap ---
+    def wrap_text(src: str, font: QFont) -> str:
+        metrics = QFontMetrics(font)
+
+        words_raw = src.split()
+
+        if not words_raw:
+            return ""
+
+        # =========================
+        # 1. PREPROCESS (БЕЗ ОПАСНОСТИ)
+        # =========================
+        words = []
+        for w in words_raw:
+            if metrics.horizontalAdvance(w) > adjusted_width * 1.7:
+                words.extend(split_single_word(w, metrics))
+            else:
+                words.append(w)
+
+        # =========================
+        # 2. WRAP (ТОЛЬКО ЧТЕНИЕ)
+        # =========================
+        word_widths = [metrics.horizontalAdvance(w) for w in words]
+        max_word_width = max(word_widths)
+
+        target_width = min(max_word_width * 1.4, adjusted_width)
+
+        avg_char = max(1, metrics.horizontalAdvance("W"))
+        short_threshold = avg_char * 1.2
+
+        lines = []
+        current = ""
+
+        i = 0
+        while i < len(words):
+            word = words[i]
+            word_w = metrics.horizontalAdvance(word)
+            is_short = word_w <= short_threshold
+
+            if not current:
+                current = word
+                i += 1
+                continue
+
+            test = current + " " + word
+
+            if metrics.horizontalAdvance(test) <= target_width:
+                current = test
+                i += 1
+                continue
+
+            if is_short:
+                current = test
+                i += 1
+                continue
+
+            lines.append(current)
+            current = ""
+
+        if current:
+            lines.append(current)
+
+        # =========================
+        # 3. CLEANUP коротких сирот
+        # =========================
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            if " " not in line and metrics.horizontalAdvance(line) <= short_threshold:
+                merged = False
+
+                if i > 0:
+                    test = lines[i - 1] + " " + line
+                    if metrics.horizontalAdvance(test) <= target_width:
+                        lines[i - 1] = test
+                        lines.pop(i)
+                        i -= 1
+                        merged = True
+
+                if not merged and i < len(lines) - 1:
+                    test = line + " " + lines[i + 1]
+                    if metrics.horizontalAdvance(test) <= target_width:
+                        lines[i + 1] = test
+                        lines.pop(i)
+                        merged = True
+
+                if merged:
+                    continue
+
+            i += 1
+
+        return "\n".join(lines)
+
+    # --- подбор шрифта ---
+    for size in range(max_font_size, min_font_size - 1, -1):
+        font = prepare_font(size)
+        metrics = QFontMetrics(font)
+
+        wrapped = wrap_text(text, font)
+        height = get_height(metrics, wrapped)
+
+        if height <= adjusted_height:
+            return wrapped, size
+
+    font = prepare_font(min_font_size)
+    return wrap_text(text, font), min_font_size
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
