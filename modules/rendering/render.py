@@ -367,22 +367,24 @@ def pyside_word_wrap(
     return wrapped_text, min_font_size
 '''
 
-def pyside_word_wrap( 
-    blk_list: List["TextBlock"], 
-    text: str, font_input: str, 
-    roi_width: int, roi_height: int, 
-    line_spacing=1.0, 
-    outline_width=0.0, 
-    bold=False, 
-    italic=False, 
-    underline=False, 
-    alignment=Qt.AlignLeft, 
-    direction=Qt.LeftToRight, 
+def pyside_word_wrap(
+    blk_list: List["TextBlock"],
+    text: str,
+    font_input: str,
+    roi_width: int,
+    roi_height: int,
+    line_spacing=1.0,
+    outline_width=0.0,
+    bold=False,
+    italic=False,
+    underline=False,
+    alignment=Qt.AlignLeft,
+    direction=Qt.LeftToRight,
     max_font_size: int = 40,
-    min_font_size: int = 10, 
-    vertical: bool = False, 
-    width_coef: float = 1.2, 
-    height_coef: float = 1.1,
+    min_font_size: int = 10,
+    vertical: bool = False,
+    width_coef: float = 1.3,
+    height_coef: float = 1.2,
 ) -> tuple[str, int]:
 
     from PySide6.QtGui import QFont, QFontMetrics
@@ -413,15 +415,10 @@ def pyside_word_wrap(
 
     def get_height(metrics: QFontMetrics, wrapped: str) -> int:
         lines = wrapped.split("\n")
-        if not lines:
-            return 0
         return int(metrics.height() * len(lines) * line_spacing)
 
-    # --- разрез длинного слова (1 раз) ---
+    # --- split слова (ТОЛЬКО если нужно) ---
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
-        if metrics.horizontalAdvance(word) <= adjusted_width * 1.3:
-            return [word]
-
         best_i = 0
         best_diff = float("inf")
 
@@ -429,11 +426,7 @@ def pyside_word_wrap(
             left = word[:i]
             right = word[i:]
 
-            left_w = metrics.horizontalAdvance(left)
-            right_w = metrics.horizontalAdvance(right)
-
-            #if left_w <= adjusted_width:
-            diff = abs(left_w - right_w)
+            diff = abs(metrics.horizontalAdvance(left) - metrics.horizontalAdvance(right))
             if diff < best_diff:
                 best_diff = diff
                 best_i = i
@@ -447,112 +440,93 @@ def pyside_word_wrap(
         return [word[:best_i] + "-", word[best_i:]]
 
     # --- wrap ---
-    def wrap_text(src: str, font: QFont) -> str:
+    def wrap_text(src: str, font: QFont, allow_split: bool) -> str:
         metrics = QFontMetrics(font)
 
         words_raw = src.split()
-
-        if not words_raw:
-            return ""
-
-        # =========================
-        # 1. PREPROCESS (БЕЗ ОПАСНОСТИ)
-        # =========================
         words = []
+
         for w in words_raw:
-            if metrics.horizontalAdvance(w) > adjusted_width * 1.3:
+            if allow_split and metrics.horizontalAdvance(w) > adjusted_width:
                 words.extend(split_single_word(w, metrics))
             else:
                 words.append(w)
 
-        # =========================
-        # 2. WRAP (ТОЛЬКО ЧТЕНИЕ)
-        # =========================
+        if not words:
+            return ""
+
         word_widths = [metrics.horizontalAdvance(w) for w in words]
         max_word_width = max(word_widths)
 
-        target_width = min(max_word_width*1.1, 1.3*adjusted_width)
-
-        avg_char = max(1, metrics.horizontalAdvance("W"))
-        short_threshold = avg_char * 1.1
+        target_width = max(max_word_width, adjusted_width)
 
         lines = []
         current = ""
 
-        i = 0
-        while i < len(words):
-            word = words[i]
-            word_w = metrics.horizontalAdvance(word)
-            is_short = word_w <= short_threshold
-
+        flag = 0
+        for word in words:
             if not current:
                 current = word
-                i += 1
                 continue
 
             test = current + " " + word
 
-            if metrics.horizontalAdvance(test) <= target_width:
-                current = test
-                i += 1
-                continue
-
-            if is_short:
-                current = test
-                i += 1
-                continue
-
-            lines.append(current)
-            current = ""
+            if flag <3:
+                condition = target_width
+            else:
+                condition = roi_width
+                
+            if metrics.horizontalAdvance(test) <= condition:#target_width:
+                current = test                
+                flag += 1 
+            else:
+                lines.append(current)
+                current = word
+                flag = 0
 
         if current:
             lines.append(current)
 
-        # =========================
-        # 3. CLEANUP коротких сирот
-        # =========================
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-
-            if " " not in line and metrics.horizontalAdvance(line) <= short_threshold:
-                merged = False
-
-                if i > 0:
-                    test = lines[i - 1] + " " + line
-                    if metrics.horizontalAdvance(test) <= target_width:
-                        lines[i - 1] = test
-                        lines.pop(i)
-                        i -= 1
-                        merged = True
-
-                if not merged and i < len(lines) - 1:
-                    test = line + " " + lines[i + 1]
-                    if metrics.horizontalAdvance(test) <= target_width:
-                        lines[i + 1] = test
-                        lines.pop(i)
-                        merged = True
-
-                if merged:
-                    continue
-
-            i += 1
-
         return "\n".join(lines)
 
-    # --- подбор шрифта ---
+    # =========================
+    # 1. Подбор шрифта по ширине (БЕЗ split)
+    # =========================
+    best_size = min_font_size
+    allow_split = False
+
     for size in range(max_font_size, min_font_size - 1, -1):
         font = prepare_font(size)
         metrics = QFontMetrics(font)
 
-        wrapped = wrap_text(text, font)
+        words = text.split()
+        max_word_width = max(metrics.horizontalAdvance(w) for w in words)
+
+        if max_word_width <= adjusted_width:
+            best_size = size
+            break
+
+    else:
+        # даже минимальный не влез → разрешаем split
+        best_size = min_font_size
+        allow_split = True
+
+    # =========================
+    # 2. Теперь учитываем высоту
+    # =========================
+    for size in range(best_size, min_font_size - 1, -1):
+        font = prepare_font(size)
+        metrics = QFontMetrics(font)
+
+        wrapped = wrap_text(text, font, allow_split)
         height = get_height(metrics, wrapped)
 
-        if height <= adjusted_height:
+        if height <= 1.1*adjusted_height:
             return wrapped, size
 
+    # fallback
     font = prepare_font(min_font_size)
-    return wrap_text(text, font), min_font_size
+    return wrap_text(text, font, True), min_font_size
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
