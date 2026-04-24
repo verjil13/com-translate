@@ -504,12 +504,24 @@ def pyside_word_wrap(
 
         if max_word_width <= adjusted_width:
             best_size = size
+            wrapped = text
             break
 
     else:
         # даже минимальный не влез → разрешаем split
         best_size = min_font_size
         allow_split = True
+        font = prepare_font(best_size)
+        wrapped = wrap_text(text, font, allow_split)
+        allow_split = False
+        for size in range(min_font_size, max_font_size):
+            best_size+=1
+            font = prepare_font(best_size)
+            words = wrapped.split()
+            max_word_width = max(metrics.horizontalAdvance(w) for w in words)
+            if max_word_width > adjusted_width:
+                best_size -= 1
+                break
 
     # =========================
     # 2. Теперь учитываем высоту
@@ -518,7 +530,7 @@ def pyside_word_wrap(
         font = prepare_font(size)
         metrics = QFontMetrics(font)
 
-        wrapped = wrap_text(text, font, allow_split)
+        wrapped = wrap_text(wrapped, font, allow_split)
         height = get_height(metrics, wrapped)
 
         if height <= 1.1*adjusted_height:
