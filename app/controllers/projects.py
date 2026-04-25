@@ -1458,8 +1458,8 @@ class ProjectController:
             self.main.font_dropdown.setCurrentText('')
         min_font_size = settings.value('min_font_size', 5)  # Default value is 5
         max_font_size = settings.value('max_font_size', 40) # Default value is 40
-        self.main.settings_page.ui.min_font_spinbox.setValue(int(min_font_size))
-        self.main.settings_page.ui.max_font_spinbox.setValue(int(max_font_size))
+        self.main.settings_page.ui.min_font_spinbox.setValue(round(float(min_font_size), 1))
+        self.main.settings_page.ui.max_font_spinbox.setValue(round(float(max_font_size), 1))
 
         color = settings.value('color', '#000000')
         self.main.block_font_color_button.setStyleSheet(f"background-color: {color}; border: none; border-radius: 5px;")

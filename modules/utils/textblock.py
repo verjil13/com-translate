@@ -26,8 +26,8 @@ class TextBlock(object):
                  alignment: str = '',
                  source_lang: str = "",
                  target_lang: str = "",
-                 min_font_size: int = 0,
-                 max_font_size: int = 0,
+                 min_font_size: float = 0,
+                 max_font_size: float = 0,
                  font_color: tuple = (),
                  direction: str = "",
                  **kwargs) -> None:

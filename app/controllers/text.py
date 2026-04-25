@@ -97,7 +97,7 @@ class TextController:
         self.main.s_text_edit.clear()
         self.main.t_text_edit.clear()
 
-    def on_blk_rendered(self, text: str, font_size: int, blk: TextBlock, image_path: str):
+    def on_blk_rendered(self, text: str, font_size: float, blk: TextBlock, image_path: str):
         if not self.main.webtoon_mode:
             if self.main.curr_img_idx < 0 or self.main.curr_img_idx >= len(self.main.image_files):
                 return
@@ -473,7 +473,7 @@ class TextController:
     # Formatting actions
     def on_font_dropdown_change(self, font_family: str):
         if self._selected_text_items() and font_family:
-            font_size = int(self.main.font_size_dropdown.currentText())
+            font_size = float(self.main.font_size_dropdown.currentText())
             self._apply_format_to_selected(
                 "change_text_font",
                 lambda item: item.set_font(font_family, font_size),
@@ -637,7 +637,7 @@ class TextController:
         try:
             # Set values
             self.main.set_font(text_item.font_family)
-            self.main.font_size_dropdown.setCurrentText(str(int(text_item.font_size)))
+            self.main.font_size_dropdown.setCurrentText(str(round(float(text_item.font_size), 1)))
 
             self.main.line_spacing_dropdown.setCurrentText(str(text_item.line_spacing))
 
@@ -702,7 +702,7 @@ class TextController:
         try:
             # Set values
             self.main.set_font(font_family) if font_family else None
-            self.main.font_size_dropdown.setCurrentText(str(int(font_size))) if font_size else None
+            self.main.font_size_dropdown.setCurrentText(str(round(float(font_size), 1))) if font_size else None
 
             if text_color is not None:
                 self.main.block_font_color_button.setStyleSheet(
@@ -1009,8 +1009,8 @@ class TextController:
         return TextRenderingSettings(
             alignment_id = self.main.alignment_tool_group.get_dayu_checked(),
             font_family = self.main.font_dropdown.currentText(),
-            min_font_size = int(self.main.settings_page.ui.min_font_spinbox.value()),
-            max_font_size = int(self.main.settings_page.ui.max_font_spinbox.value()),
+            min_font_size = round(float(self.main.settings_page.ui.min_font_spinbox.value())),
+            max_font_size = round(float(self.main.settings_page.ui.max_font_spinbox.value())),
             color = self.main.block_font_color_button.property('selected_color'),
             upper_case = self.main.settings_page.ui.uppercase_checkbox.isChecked(),
             outline = self.main.outline_checkbox.isChecked(),

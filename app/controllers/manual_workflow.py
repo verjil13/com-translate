@@ -476,7 +476,7 @@ class ManualWorkflowController:
         def set_new_text(
             text_item: TextBlockItem, 
             wrapped: str, 
-            font_size: int
+            font_size: float
         ) -> None:
             
             if is_no_space_lang(trg_lng_cd):

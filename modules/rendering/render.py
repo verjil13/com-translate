@@ -28,8 +28,8 @@ from dataclasses import dataclass
 class TextRenderingSettings:
     alignment_id: int
     font_family: str
-    min_font_size: int
-    max_font_size: int
+    min_font_size: float
+    max_font_size: float
     color: str
     upper_case: bool
     outline: bool
@@ -380,8 +380,8 @@ def pyside_word_wrap(
     underline=False,
     alignment=Qt.AlignLeft,
     direction=Qt.LeftToRight,
-    max_font_size: int = 40,
-    min_font_size: int = 10,
+    max_font_size: float = 40,
+    min_font_size: float = 10,
     vertical: bool = False,
     width_coef: float = 1.3,
     height_coef: float = 1.2,
@@ -494,8 +494,12 @@ def pyside_word_wrap(
     # =========================
     best_size = min_font_size
     allow_split = False
+    
+    step = 0.1
+    size = max_font_size
 
-    for size in range(max_font_size, min_font_size - 1, -1):
+    #for size in range(max_font_size, min_font_size - 1, -1):
+    while size>=min_font_size:
         font = prepare_font(size)
         metrics = QFontMetrics(font)
 
@@ -506,6 +510,7 @@ def pyside_word_wrap(
             best_size = size
             wrapped = text
             break
+        size-=step    
 
     else:
         # даже минимальный не влез → разрешаем split
@@ -514,31 +519,33 @@ def pyside_word_wrap(
         font = prepare_font(best_size)
         wrapped = wrap_text(text, font, allow_split)
         allow_split = False
-        for size in range(min_font_size, max_font_size):
-            best_size+=1
+        #for size in range(min_font_size, max_font_size):
+        while best_size<=max_font_size:            
             font = prepare_font(best_size)
             words = wrapped.split()
             max_word_width = max(metrics.horizontalAdvance(w) for w in words)
             if max_word_width > adjusted_width:
-                best_size -= 1
                 break
+            best_size+=step    
 
     # =========================
     # 2. Теперь учитываем высоту
     # =========================
-    for size in range(best_size, min_font_size - 1, -1):
-        font = prepare_font(size)
+    #for size in range(best_size, min_font_size^ - 1, -1):
+    while best_size > min_font_size:
+        font = prepare_font(best_size)
         metrics = QFontMetrics(font)
 
         wrapped = wrap_text(wrapped, font, allow_split)
         height = get_height(metrics, wrapped)
 
         if height <= 1.1*adjusted_height:
-            return wrapped, size
+            return wrapped, best_size
+        best_size -= step
 
     # fallback
     font = prepare_font(min_font_size)
-    return wrap_text(text, font, True), min_font_size
+    return wrap_text(text, font, allow_split), min_font_size
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
@@ -556,8 +563,8 @@ def manual_wrap(
     underline: bool, 
     alignment,#: Qt.AlignmentFlag, 
     direction,#: Qt.LayoutDirection, 
-    init_font_size: int = 40, 
-    min_font_size: int = 10
+    init_font_size: float = 40, 
+    min_font_size: float = 10
 ):
     target_lang = main_page.lang_mapping.get(main_page.t_combo.currentText(), None)
     trg_lng_cd = get_language_code(target_lang)                                                                                   
