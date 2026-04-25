@@ -69,7 +69,7 @@ def is_vertical_block(blk, lang_code: str | None) -> bool:
     return getattr(blk, "direction", "") == "vertical" and is_vertical_language_code(lang_code)
 
 def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str, 
-                  roi_width, roi_height, align: str, spacing, init_font_size: int, min_font_size: int = 10):
+                  roi_width, roi_height, align: str, spacing, init_font_size: float, min_font_size: float = 10):
     """Break long text to multiple lines, and reduce point size
     until all text fits within a bounding box."""
     mutable_message = text
@@ -540,11 +540,13 @@ def pyside_word_wrap(
         height = get_height(metrics, wrapped)
 
         if height <= 1.1*adjusted_height:
+            best_size = round(max(min_font_size, min(best_size, max_font_size)),1)
             return wrapped, best_size
         best_size -= step
 
     # fallback
-    font = prepare_font(min_font_size)
+    min_font_size = round(min_font_size,1)
+    font = prepare_font(min_font_size)    
     return wrap_text(text, font, allow_split), min_font_size
 
 # ============================================================
