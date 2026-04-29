@@ -24,12 +24,10 @@ class GeminiOCR(OCREngine):
         # 🔥 загружаем модель напрямую
         self.model = Llama(
             model_path=r"H:\LModel\adambarbato\PaddleOCR-VL-For-Manga-GGUF\PaddleOCR-VL-For-Manga-BF16.gguf",
-            mmproj=r"H:\LModel\adambarbato\PaddleOCR-VL-For-Manga-GGUF\PaddleOCR-VL-For-Manga-mmproj-BF16.gguf",
-            # model_path=r"H:\LModel\noctrex\PaddleOCR-VL-1.5-GGUF\PaddleOCR-VL-1.5-F16.gguf",
-            # mmproj=r"H:\LModel\noctrex\PaddleOCR-VL-1.5-GGUF\mmproj-F32.gguf",
-            n_ctx=4096,
-            n_gpu_layers=50,  # 0 если CPU
-            verbose=False,
+            mmproj_path=r"H:\LModel\adambarbato\PaddleOCR-VL-For-Manga-GGUF\PaddleOCR-VL-For-Manga-mmproj-BF16.gguf",
+            n_ctx=8096,
+            n_gpu_layers=-1,
+ 
         )
 
     def process_image(
@@ -70,21 +68,27 @@ class GeminiOCR(OCREngine):
             print("[OCR REQUEST]")
 
             # показываем, что реально отправляется
-            request_payload = {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": {"url": f"data:image/jpeg;base64,{base64_image}"},
-                    },
-                    {"type": "text", "text": ""},
-                ],
-            }
-
-            print("messages =", request_payload)
+            # print("messages =", request_payload)
 
             response = self.model.create_chat_completion(
-                messages=[request_payload],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that outputs in JSON.",
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                },
+                            },
+                            {"type": "text", "text": ""},
+                        ],
+                    },
+                ],
                 temperature=0,
             )
 
