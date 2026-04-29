@@ -1,30 +1,36 @@
 import numpy as np
-import requests
+from llama_cpp import Llama
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
-from ..utils.translator_utils import MODEL_MAP
 from app.ui.settings.settings_page import SettingsPage
 
 
 class GeminiOCR(OCREngine):
-    """OCR engine using LM Studio (PaddleOCR-VL) with block processing method."""
+    """OCR engine using local GGUF model via llama.cpp (no LM Studio)."""
 
     def __init__(self):
-        self.api_key = None
         self.expansion_percentage = 5
-        self.model = ""
+        self.model = None
 
     def initialize(
         self,
         settings: SettingsPage,
-        model: str = "Gemini-2.0-Flash",
+        model_path: str = "paddleocr-vl-for-manga.gguf",
         expansion_percentage: int = 5,
     ) -> None:
-        """
-        Initialize the OCR engine.
-        """
         self.expansion_percentage = expansion_percentage
+
+        # 🔥 загружаем модель напрямую
+        self.model = Llama(
+            model_path=r"H:\LModel\adambarbato\PaddleOCR-VL-For-Manga-GGUF\PaddleOCR-VL-For-Manga-BF16.gguf",
+            mmproj=r"H:\LModel\adambarbato\PaddleOCR-VL-For-Manga-GGUF\PaddleOCR-VL-For-Manga-mmproj-BF16.gguf",
+            # model_path=r"H:\LModel\noctrex\PaddleOCR-VL-1.5-GGUF\PaddleOCR-VL-1.5-F16.gguf",
+            # mmproj=r"H:\LModel\noctrex\PaddleOCR-VL-1.5-GGUF\mmproj-F32.gguf",
+            n_ctx=4096,
+            n_gpu_layers=50,  # 0 если CPU
+            verbose=False,
+        )
 
     def process_image(
         self, img: np.ndarray, blk_list: list[TextBlock]
@@ -34,6 +40,7 @@ class GeminiOCR(OCREngine):
     def _process_by_blocks(
         self, img: np.ndarray, blk_list: list[TextBlock]
     ) -> list[TextBlock]:
+
         for blk in blk_list:
             if blk.bubble_xyxy is not None:
                 x1, y1, x2, y2 = blk.bubble_xyxy
@@ -58,40 +65,41 @@ class GeminiOCR(OCREngine):
         return blk_list
 
     def _get_gemini_block_ocr(self, base64_image: str) -> str:
-        url = "http://localhost:1234/v1/chat/completions"
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer 123",
-        }
-
-        payload = {
-            "model": "paddleocr-vl-for-manga",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        }
-                    ],
-                }
-            ],
-            "temperature": 0,
-        }
-
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=20)
-            response.raise_for_status()
+            print("\n" + "=" * 80)
+            print("[OCR REQUEST]")
 
-            data = response.json()
-            text = data["choices"][0]["message"]["content"]
+            # показываем, что реально отправляется
+            request_payload = {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                    },
+                    {"type": "text", "text": ""},
+                ],
+            }
+
+            print("messages =", request_payload)
+
+            response = self.model.create_chat_completion(
+                messages=[request_payload],
+                temperature=0,
+            )
+
+            print("\n[RAW RESPONSE DICT]")
+            print(response)
+
+            text = response["choices"][0]["message"]["content"]
+
+            print("\n[PARSED TEXT]")
+            print(text)
+
+            print("=" * 80 + "\n")
 
             return text.strip()
 
         except Exception as e:
-            print(f"LM Studio error: {e}")
+            print("[OCR ERROR]", e)
             return ""
