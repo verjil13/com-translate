@@ -456,7 +456,7 @@ def pyside_word_wrap(
             return ""
 
         word_widths = [metrics.horizontalAdvance(w) for w in words]
-        max_word_width = max(word_widths)
+        max_word_width = max(word_widths)        
 
         target_width = max(max_word_width, adjusted_width)
 
@@ -522,9 +522,10 @@ def pyside_word_wrap(
         #for size in range(min_font_size, max_font_size):
         while best_size<=max_font_size:            
             font = prepare_font(best_size)
+            metrics = QFontMetrics(font)
             words = wrapped.split()
             max_word_width = max(metrics.horizontalAdvance(w) for w in words)
-            if max_word_width > adjusted_width:
+            if max_word_width >= adjusted_width:
                 break
             best_size+=step    
 
@@ -547,7 +548,7 @@ def pyside_word_wrap(
     # fallback
     min_font_size = round(min_font_size,1)
     font = prepare_font(min_font_size)    
-    return wrap_text(text, font, allow_split), min_font_size
+    return wrap_text(wrapped, font, allow_split), min_font_size
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
