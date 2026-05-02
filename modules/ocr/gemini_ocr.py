@@ -16,9 +16,12 @@ class GeminiOCR(OCREngine):
     def __init__(self):
         self.model = None
         self.processor = None
-        self.device = "cuda"  # №if torch.cuda.is_available() else "cpu"
+        self.device = "cuda"
         self.expansion_percentage = 5
 
+    # -------------------------
+    # INIT
+    # -------------------------
     def initialize(
         self,
         settings=None,
@@ -28,32 +31,22 @@ class GeminiOCR(OCREngine):
 
         self.expansion_percentage = expansion_percentage
 
-        # ❗ ВАЖНО: используем repo_id, НЕ snapshot path
         model_id = "PaddlePaddle/PaddleOCR-VL-1.5"
 
         print("DEVICE:", self.device)
         print("Loading model:", model_id)
 
         try:
-            # ---- Processor (REMOTE CODE REQUIRED) ----
-            self.processor = AutoProcessor.from_pretrained(
-                model_id,
-                # trust_remote_code=True,
-            )
+            self.processor = AutoProcessor.from_pretrained(model_id)
 
-            # ---- Model ----
             self.model = (
                 AutoModelForImageTextToText.from_pretrained(
                     model_id,
-                    torch_dtype=torch.bfloat16,  # if self.device == "cuda" else torch.float32,
-                    # device_map="auto" if self.device == "cuda" else None,
-                    # trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
                 )
                 .to(self.device)
                 .eval()
-            )  # правильно
-
-            # self.model.eval() #неправильно
+            )
 
             print("✅ PaddleOCR-VL loaded successfully")
 
@@ -61,17 +54,42 @@ class GeminiOCR(OCREngine):
             print("❌ Model loading error:", e)
             raise
 
-    # ---- public API (НЕ ТРОГАЕМ) ----
-    def process_image(
-        self, img: np.ndarray, blk_list: list[TextBlock]
-    ) -> list[TextBlock]:
+    # -------------------------
+    # PUBLIC API
+    # -------------------------
+    def process_image(self, img: np.ndarray, blk_list: list[TextBlock]):
         return self._process_by_blocks(img, blk_list)
 
-    # ---- block processing ----
+    # -------------------------
+    # RESIZE FUNCTION (NEW)
+    # -------------------------
+    def _resize_if_needed(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
 
+        max_size = 384       
+
+        if min(w,h)>=48:
+            w/=1.5
+            h/=1.5
+
+        if w <= max_size and h <= max_size:           
+            return img.resize((int(w), int(h)), Image.BILINEAR)
+
+        scale = min(max_size / w, max_size / h)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+
+        return img.resize((new_w, new_h), Image.BILINEAR)
+
+    # -------------------------
+    # BLOCK PROCESSING
+    # -------------------------
     def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
+
         torch.cuda.empty_cache()
+
         for blk in blk_list:
+
             if blk.bubble_xyxy is not None:
                 x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
@@ -88,34 +106,34 @@ class GeminiOCR(OCREngine):
             cropped = img[y1:y2, x1:x2]
             cropped_pil = Image.fromarray(cropped).convert("RGB")
 
-            start = time.time()
+            # 🔥 RESIZE FIX HERE
+            cropped_pil = self._resize_if_needed(cropped_pil) #384
 
-            text = self._get_ocr(cropped_pil)
+            start = time.time()
+            blk.text = self._get_ocr(cropped_pil)
 
             elapsed = time.time() - start
             if elapsed > 10:
                 print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
 
-            blk.text = text
-
         return blk_list
 
-    # ---- OCR CORE ----
-
+    # -------------------------
+    # OCR CORE (THREAD + TIMEOUT)
+    # -------------------------
     def _get_ocr(self, image: Image.Image) -> str:
+
         result = [""]
         error = [None]
 
         def worker():
             try:
-                PROMPT = "OCR:"
-
                 messages = [
                     {
                         "role": "user",
                         "content": [
                             {"type": "image", "image": image},
-                            {"type": "text", "text": PROMPT},
+                            {"type": "text", "text": "OCR:"},
                         ],
                     }
                 ]
@@ -155,7 +173,7 @@ class GeminiOCR(OCREngine):
         thread.join(timeout=30)
 
         if thread.is_alive():
-            print("⛔ OCR TIMEOUT (10s) — skipping block")
+            print("⛔ OCR TIMEOUT (30s)")
             return ""
 
         if error[0]:
