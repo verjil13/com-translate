@@ -45,9 +45,9 @@ class GeminiOCR(OCREngine):
                 torch_dtype=torch.bfloat16# if self.device == "cuda" else torch.float32,
                 #device_map="auto" if self.device == "cuda" else None,
                 #trust_remote_code=True,
-            ).to(self.device).eval()
+            ).to(self.device).eval() #правильно
 
-            #self.model.eval()
+            # self.model.eval() #неправильно
 
             print("✅ PaddleOCR-VL loaded successfully")
 
@@ -65,7 +65,7 @@ class GeminiOCR(OCREngine):
     def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
 
         for blk in blk_list:
-
+            torch.cuda.empty_cache()
             if blk.bubble_xyxy is not None:
                 x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
