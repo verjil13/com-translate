@@ -153,7 +153,8 @@ class OCRFactory:
 
         # Model-specific factory functions
         general = {
-            "Microsoft OCR": cls._create_microsoft_ocr,
+            "Microsoft OCR": lambda s: cls._create_microsoft_ocr(
+                s, "jzhang533/PaddleOCR-VL-For-Manga"),
             "Google Cloud Vision": cls._create_google_ocr,
             "GPT-4.1-mini": lambda s: cls._create_gpt_ocr(s, ocr_model),
             "Gemini-2.0-Flash": lambda s: cls._create_gemini_ocr(
@@ -258,9 +259,14 @@ class OCRFactory:
         engine.initialize(settings, model)
         return engine
 
-
     @staticmethod
     def _create_gemini_ocr(settings, model) -> OCREngine:
         engine = GeminiOCR()
+        engine.initialize(settings, model)
+        return engine
+
+    @staticmethod
+    def _create_microsoft_ocr(settings, model) -> OCREngine:
+        engine = MicrosoftOCR()
         engine.initialize(settings, model)
         return engine

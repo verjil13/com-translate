@@ -9,13 +9,14 @@ from ..utils.textblock import TextBlock, adjust_text_line_coordinates
 import threading
 import time
 
+
 class GeminiOCR(OCREngine):
     """OCR engine using PaddleOCR-VL (WORKING HF VERSION)"""
 
     def __init__(self):
         self.model = None
         self.processor = None
-        self.device = "cuda" #№if torch.cuda.is_available() else "cpu"
+        self.device = "cuda"  # №if torch.cuda.is_available() else "cpu"
         self.expansion_percentage = 5
 
     def initialize(
@@ -37,16 +38,20 @@ class GeminiOCR(OCREngine):
             # ---- Processor (REMOTE CODE REQUIRED) ----
             self.processor = AutoProcessor.from_pretrained(
                 model_id,
-                #trust_remote_code=True,
+                # trust_remote_code=True,
             )
 
             # ---- Model ----
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                torch_dtype=torch.bfloat16# if self.device == "cuda" else torch.float32,
-                #device_map="auto" if self.device == "cuda" else None,
-                #trust_remote_code=True,
-            ).to(self.device).eval() #правильно
+            self.model = (
+                AutoModelForImageTextToText.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.bfloat16,  # if self.device == "cuda" else torch.float32,
+                    # device_map="auto" if self.device == "cuda" else None,
+                    # trust_remote_code=True,
+                )
+                .to(self.device)
+                .eval()
+            )  # правильно
 
             # self.model.eval() #неправильно
 
@@ -97,7 +102,6 @@ class GeminiOCR(OCREngine):
 
     # ---- OCR CORE ----
 
-
     def _get_ocr(self, image: Image.Image) -> str:
         result = [""]
         error = [None]
@@ -129,7 +133,7 @@ class GeminiOCR(OCREngine):
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=128,
+                        max_new_tokens=2048,
                         do_sample=False,
                         use_cache=False,
                         eos_token_id=self.processor.tokenizer.eos_token_id,
@@ -137,7 +141,8 @@ class GeminiOCR(OCREngine):
                     )
 
                 decoded = self.processor.decode(
-                    outputs[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
+                    outputs[0][inputs["input_ids"].shape[-1] :],
+                    skip_special_tokens=True,
                 )
 
                 result[0] = decoded.strip()
@@ -147,7 +152,7 @@ class GeminiOCR(OCREngine):
 
         thread = threading.Thread(target=worker)
         thread.start()
-        thread.join(timeout=10)
+        thread.join(timeout=30)
 
         if thread.is_alive():
             print("⛔ OCR TIMEOUT (10s) — skipping block")
