@@ -1,22 +1,20 @@
 from PIL import Image
 import torch
 import numpy as np
-import sys
-import os
 
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
 
 
 class GeminiOCR(OCREngine):
-    """OCR engine using PaddleOCR-VL-For-Manga"""
+    """OCR engine using PaddleOCR-VL (WORKING HF VERSION)"""
 
     def __init__(self):
         self.model = None
         self.processor = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda" #№if torch.cuda.is_available() else "cpu"
         self.expansion_percentage = 5
 
     def initialize(
@@ -25,52 +23,57 @@ class GeminiOCR(OCREngine):
         model_path: str = None,
         expansion_percentage: int = 5,
     ) -> None:
+
         self.expansion_percentage = expansion_percentage
 
-        model_dir = r"H:\models--jzhang533--PaddleOCR-VL-For-Manga"
+        # ❗ ВАЖНО: используем repo_id, НЕ snapshot path
+        model_id = "PaddlePaddle/PaddleOCR-VL-1.5"
 
-        print(f"Загрузка PaddleOCR-VL-For-Manga из: {model_dir}")
-
-        if model_dir not in sys.path:
-            sys.path.insert(0, model_dir)
+        print("DEVICE:", self.device)
+        print("Loading model:", model_id)
 
         try:
-            from processing_paddleocr_vl import PaddleOCRVLProcessor
-
-            self.processor = PaddleOCRVLProcessor.from_pretrained(
-                model_dir, trust_remote_code=True, local_files_only=True
+            # ---- Processor (REMOTE CODE REQUIRED) ----
+            self.processor = AutoProcessor.from_pretrained(
+                model_id,
+                #trust_remote_code=True,
             )
 
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_dir,
-                torch_dtype=torch.float32,
-                device_map="cpu",
-                trust_remote_code=True,
-                local_files_only=True,
-            )
+            # ---- Model ----
+            self.model = AutoModelForImageTextToText.from_pretrained(
+                model_id,
+                torch_dtype=torch.bfloat16# if self.device == "cuda" else torch.float32,
+                #device_map="auto" if self.device == "cuda" else None,
+                #trust_remote_code=True,
+            ).to(self.device).eval()
 
-            self.model.eval()
-            print("✅ Модель PaddleOCR-VL-For-Manga успешно загружена!")
+            #self.model.eval()
+
+            print("✅ PaddleOCR-VL loaded successfully")
 
         except Exception as e:
-            print("❌ Ошибка загрузки модели:", e)
+            print("❌ Model loading error:", e)
             raise
 
-    # process_image и _process_by_blocks остаются прежними
+    # ---- public API (НЕ ТРОГАЕМ) ----
     def process_image(
         self, img: np.ndarray, blk_list: list[TextBlock]
     ) -> list[TextBlock]:
         return self._process_by_blocks(img, blk_list)
 
-    def _process_by_blocks(
-        self, img: np.ndarray, blk_list: list[TextBlock]
-    ) -> list[TextBlock]:
+    # ---- block processing ----
+    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
+
         for blk in blk_list:
+
             if blk.bubble_xyxy is not None:
                 x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
                 x1, y1, x2, y2 = adjust_text_line_coordinates(
-                    blk.xyxy, self.expansion_percentage, self.expansion_percentage, img
+                    blk.xyxy,
+                    self.expansion_percentage,
+                    self.expansion_percentage,
+                    img,
                 )
 
             if x1 >= x2 or y1 >= y2:
@@ -83,34 +86,51 @@ class GeminiOCR(OCREngine):
 
         return blk_list
 
+    # ---- OCR CORE ----
     def _get_ocr(self, image: Image.Image) -> str:
         try:
-            inputs = self.processor(images=image, text="", return_tensors="pt").to(
-                self.device
-            )
+            PROMPT = "OCR:"
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": PROMPT},
+                    ],
+                }
+            ]
+
+            inputs = self.processor.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            ).to(self.device)
 
             with torch.no_grad():
-                generated_ids = self.model.generate(
+                outputs = self.model.generate(
                     **inputs,
-                    max_new_tokens=512,
+                    max_new_tokens=4096,
                     do_sample=False,
-                    num_beams=1,
-                    use_cache=False,
                 )
 
-            raw_output = self.processor.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
+            result = self.processor.decode(
+                outputs[0][inputs["input_ids"].shape[-1] : -1]
+            )
 
-            text = raw_output.strip()
-            for prefix in ["OCR:", "OCR :", "Text:", "Ответ:", "Ответ :"]:
+            text = result.strip()
+
+            # cleanup
+            for prefix in ["OCR:", "OCR :", "Text:", "Answer:", "Answer :"]:
                 if text.startswith(prefix):
                     text = text[len(prefix) :].strip()
                     break
 
-            print(f"[OCR RAW] → {repr(text[:100])}")
+            print(f"[OCR] {repr(text[:100])}")
             return text
 
         except Exception as e:
-            print("[PaddleOCR-VL ERROR]", str(e))
+            print("[OCR ERROR]", e)
             return ""

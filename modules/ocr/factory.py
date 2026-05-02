@@ -16,7 +16,7 @@ from .user_ocr import UserOCR
 
 class OCRFactory:
     """Factory for creating appropriate OCR engines based on settings."""
-    
+
     _engines = {}  # Cache of created engines
     _DEFAULT_BACKEND = "onnx"
 
@@ -24,7 +24,7 @@ class OCRFactory:
         "GPT": GPTOCR,
         "Gemini": GeminiOCR,
     }
-    
+
     @classmethod
     def create_engine(
         cls, 
@@ -74,7 +74,7 @@ class OCRFactory:
         engine = cls._create_new_engine(settings, source_lang_english, ocr_model, effective_backend)
         cls._engines[cache_key] = engine
         return engine
-    
+
     @classmethod
     def _create_cache_key(
         cls, 
@@ -139,7 +139,7 @@ class OCRFactory:
         if effective_backend == "torch" and not torch_available():
             return "onnx"
         return effective_backend
-    
+
     @classmethod
     def _create_new_engine(
         cls, 
@@ -150,15 +150,17 @@ class OCRFactory:
     ) -> OCREngine:
         """Create a new OCR engine instance based on model and language."""
         effective_backend = cls._resolve_backend(backend)
-        
+
         # Model-specific factory functions
         general = {
-            'Microsoft OCR': cls._create_microsoft_ocr,
-            'Google Cloud Vision': cls._create_google_ocr,
-            'GPT-4.1-mini': lambda s: cls._create_gpt_ocr(s, ocr_model),
-            'Gemini-2.0-Flash': lambda s: cls._create_gemini_ocr(s, ocr_model),
+            "Microsoft OCR": cls._create_microsoft_ocr,
+            "Google Cloud Vision": cls._create_google_ocr,
+            "GPT-4.1-mini": lambda s: cls._create_gpt_ocr(s, ocr_model),
+            "Gemini-2.0-Flash": lambda s: cls._create_gemini_ocr(
+                s, "PaddlePaddle/PaddleOCR-VL-1.5"
+            ),
         }
-        
+
         # Language-specific factory functions (for Default model)
         language_factories = {
             'Japanese': lambda s: cls._create_manga_ocr(s, effective_backend),
@@ -172,17 +174,17 @@ class OCRFactory:
             'German': lambda s: cls._create_ppocr(s, 'latin', effective_backend),
             'Dutch': lambda s: cls._create_ppocr(s, 'latin', effective_backend),
         }
-        
+
         # Check if we have a specific model factory
         if ocr_model in general:
             return general[ocr_model](settings)
-        
+
         # For Default, use language-specific engines
         if ocr_model == 'Default' and source_lang_english in language_factories:
             return language_factories[source_lang_english](settings)
-        
+
         return 
-    
+
     @staticmethod
     def _create_microsoft_ocr(settings) -> OCREngine:
         credentials = settings.get_credentials(settings.ui.tr("Microsoft Azure"))
@@ -192,14 +194,14 @@ class OCRFactory:
             endpoint=credentials['endpoint']
         )
         return engine
-    
+
     @staticmethod
     def _create_google_ocr(settings) -> OCREngine:
         credentials = settings.get_credentials(settings.ui.tr("Google Cloud"))
         engine = GoogleOCR()
         engine.initialize(api_key=credentials['api_key'])
         return engine
-    
+
     @staticmethod
     def _create_gpt_ocr(settings, model) -> OCREngine:
         credentials = settings.get_credentials(settings.ui.tr("Open AI GPT"))
@@ -207,11 +209,11 @@ class OCRFactory:
         engine = GPTOCR()
         engine.initialize(api_key=api_key, model=model)
         return engine
-    
+
     @staticmethod
     def _create_manga_ocr(settings, backend: str = 'onnx') -> OCREngine:
         device = resolve_device(settings.is_gpu_enabled(), backend)
-        
+
         if backend.lower() == 'torch' and torch_available():
             from .manga_ocr.engine import MangaOCREngine
             engine = MangaOCREngine()
@@ -219,13 +221,13 @@ class OCRFactory:
         else:
             engine = MangaOCREngineONNX()
             engine.initialize(device=device)
-        
+
         return engine
-    
+
     @staticmethod
     def _create_pororo_ocr(settings, backend: str = 'onnx') -> OCREngine:
         device = resolve_device(settings.is_gpu_enabled(), backend)
-        
+
         if backend.lower() == 'torch' and torch_available():
             from .pororo.engine import PororoOCREngine
             engine = PororoOCREngine()
@@ -233,9 +235,9 @@ class OCRFactory:
         else:
             engine = PororoOCREngineONNX()
             engine.initialize(device=device)
-        
+
         return engine
-    
+
     @staticmethod
     def _create_ppocr(settings, lang: str, backend: str = 'onnx') -> OCREngine:
         device = resolve_device(settings.is_gpu_enabled(), backend)
@@ -247,9 +249,16 @@ class OCRFactory:
         else:
             engine = PPOCRv5Engine()
             engine.initialize(lang=lang, device=device)
-        
+
         return engine
-    
+
+    @staticmethod
+    def _create_gemini_ocr(settings, model) -> OCREngine:
+        engine = GeminiOCR()
+        engine.initialize(settings, model)
+        return engine
+
+
     @staticmethod
     def _create_gemini_ocr(settings, model) -> OCREngine:
         engine = GeminiOCR()
