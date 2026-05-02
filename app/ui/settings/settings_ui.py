@@ -57,8 +57,8 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.detectors = ['RT-DETR-v2']
         self.ocr_engines = [
             self.tr("Default"), 
-            self.tr('Microsoft OCR'), 
-            self.tr('Gemini-2.0-Flash'), 
+            self.tr('LMstudio-OCR'), 
+            self.tr('PaddleVL-1.5-OCR'), 
         ]
         self.inpaint_strategy = [self.tr('Resize'), self.tr('Original'), self.tr('Crop')]
         self.themes = [self.tr('Dark'), self.tr('Light')]

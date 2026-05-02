@@ -1,149 +1,44 @@
-from PIL import Image
-import torch
 import numpy as np
-import threading
-import time
-
-from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor
+import requests
+import cv2
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
+from app.ui.settings.settings_page import SettingsPage
 
 
 class MicrosoftOCR(OCREngine):
-    """OCR engine for PaddleOCR-VL / Manga variants (robust version)"""
+    """OCR engine using LM Studio (PaddleOCR-VL) with strict sequential batching."""
 
     def __init__(self):
-        self.model = None
-        self.processor = None
-        self.device = "cuda"
+        self.api_key = None
         self.expansion_percentage = 5
+        self.model = ""
 
-    # ---------------------------
-    # INIT
-    # ---------------------------
     def initialize(
         self,
-        settings=None,
-        model_path: str = None,
+        settings: SettingsPage,
+        model: str = "Gemini-2.0-Flash",
         expansion_percentage: int = 5,
     ) -> None:
-
         self.expansion_percentage = expansion_percentage
-        model_id = model_path or "PaddlePaddle/PaddleOCR-VL-For-Manga"
 
-        print("DEVICE:", self.device)
-        print("Loading model:", model_id)
+    # -------------------------
+    # MAIN PIPELINE
+    # -------------------------
+    def process_image(
+        self, img: np.ndarray, blk_list: list[TextBlock]
+    ) -> list[TextBlock]:
 
-        try:
-            # ---- Processor ----
-            self.processor = AutoProcessor.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-            )
+        crops = []
+        valid_blocks = []
 
-            self._patch_processor_image_size()
-
-            # ---- Config ----
-            config = AutoConfig.from_pretrained(
-                model_id,
-                trust_remote_code=True,
-            )
-
-            # 🔥 ROBUST ROPE FIX
-            if hasattr(config, "rope_scaling"):
-
-                # 1. если строка
-                if isinstance(config.rope_scaling, str):
-                    print("🔧 rope_scaling is string → fixing")
-                    config.rope_scaling = {
-                        "rope_type": "linear",
-                        "factor": 1.0,
-                    }
-
-                # 2. если dict
-                elif isinstance(config.rope_scaling, dict):
-                    rope_type = (
-                        config.rope_scaling.get("rope_type")
-                        or config.rope_scaling.get("type")
-                    )
-
-                    if rope_type in ["default", None]:
-                        print("🔧 Fixing rope_type -> linear")
-                        config.rope_scaling["rope_type"] = "linear"
-
-                    # 💥 КЛЮЧЕВОЕ: добавляем factor если его нет
-                    if "factor" not in config.rope_scaling:
-                        print("🔧 Adding rope factor")
-                        config.rope_scaling["factor"] = 1.0
-
-                # 3. если None / мусор
-                else:
-                    print("🔧 Adding full rope_scaling")
-                    config.rope_scaling = {
-                        "rope_type": "linear",
-                        "factor": 1.0,
-                    }
-
-            # ---- Model ----
-            self.model = (
-                AutoModelForCausalLM.from_pretrained(
-                    model_id,
-                    config=config,
-                    trust_remote_code=True,
-                    torch_dtype=torch.bfloat16,
-                    low_cpu_mem_usage=True,
-                )
-                .to(self.device)
-                .eval()
-            )
-
-            print("✅ Model loaded successfully")
-
-        except Exception as e:
-            print("❌ Model loading error:", e)
-            raise
-
-    # ---------------------------
-    # PATCH IMAGE PROCESSOR
-    # ---------------------------
-    def _patch_processor_image_size(self):
-        """
-        Fix models with:
-        {'max_pixels', 'min_pixels'}
-        """
-
-        try:
-            if hasattr(self.processor, "image_processor"):
-                ip = self.processor.image_processor
-
-                if hasattr(ip, "size") and isinstance(ip.size, dict):
-                    keys = set(ip.size.keys())
-
-                    if "max_pixels" in keys or "min_pixels" in keys:
-                        ip.size = {"shortest_edge": 1024}
-                        print("🔧 Patched image_processor.size")
-
-        except Exception as e:
-            print("⚠️ Patch warning:", e)
-
-    # ---------------------------
-    # PUBLIC API
-    # ---------------------------
-    def process_image(self, img: np.ndarray, blk_list: list[TextBlock]):
-        return self._process_by_blocks(img, blk_list)
-
-    # ---------------------------
-    # BLOCK PROCESSING
-    # ---------------------------
-    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
-
-        torch.cuda.empty_cache()
-
+        # -------------------------
+        # 1. crop blocks
+        # -------------------------
         for blk in blk_list:
-
             if blk.bubble_xyxy is not None:
-                x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
+                x1, y1, x2, y2 = blk.bubble_xyxy
             else:
                 x1, y1, x2, y2 = adjust_text_line_coordinates(
                     blk.xyxy,
@@ -152,79 +47,218 @@ class MicrosoftOCR(OCREngine):
                     img,
                 )
 
-            if x1 >= x2 or y1 >= y2:
-                continue
+            if (
+                x1 < x2
+                and y1 < y2
+                and x1 >= 0
+                and y1 >= 0
+                and x2 <= img.shape[1]
+                and y2 <= img.shape[0]
+            ):
+                crops.append(img[y1:y2, x1:x2])
+                valid_blocks.append(blk)
 
-            cropped = img[y1:y2, x1:x2]
-            cropped_pil = Image.fromarray(cropped).convert("RGB")
+        if not crops:
+            return blk_list
 
-            start = time.time()
-            blk.text = self._get_ocr(cropped_pil)
+        # -------------------------
+        # 2. SEQUENTIAL GREEDY BATCHING
+        # -------------------------
+        MAX_BATCH_SIZE = 3
+        RATIO_LIMIT = 2.0
 
-            elapsed = time.time() - start
-            if elapsed > 10:
-                print(f"⛔ SLOW BLOCK: {elapsed:.2f}s")
+        batches = []
+        i = 0
+        n = len(crops)
+
+        while i < n:
+
+            current = [crops[i]]
+            current_blocks = [valid_blocks[i]]
+            j = i + 1
+
+            while j < n and len(current) < MAX_BATCH_SIZE:
+
+                candidate = current + [crops[j]]
+
+                widths = [c.shape[1] for c in candidate]
+                ratio_ok = max(widths) / min(widths) <= RATIO_LIMIT
+
+                if ratio_ok:
+                    current.append(crops[j])
+                    current_blocks.append(valid_blocks[j])
+                    j += 1
+                else:
+                    break
+
+            batches.append((current, current_blocks))
+            i = j
+
+        # -------------------------
+        # 3. PROCESS EACH BATCH
+        # -------------------------
+        MAX_WIDTH = 768
+        MIN_WIDTH = 96
+
+        for batch_imgs, batch_blocks in batches:
+
+            # --- dynamic width
+            target_width = max(c.shape[1] for c in batch_imgs)
+            target_width = min(max(target_width, MIN_WIDTH), MAX_WIDTH)
+
+            # --- resize ВСЕХ заранее
+            resized = []
+            for crop in batch_imgs:
+                if crop.shape[1] != target_width:
+                    crop = self._resize_to_width(crop, target_width)
+                resized.append(crop)
+
+            # --- средняя высота
+            heights = [img.shape[0] for img in resized]
+            avg_h = sum(heights) / len(heights)
+
+            sep_h = int(avg_h * 0.25)
+            sep_h = max(16, min(sep_h, 64))
+
+            # --- stack
+            stacked_images = []
+
+            for k, img_r in enumerate(resized):
+                stacked_images.append(img_r)
+
+                if k < len(resized) - 1:
+                    sep = self._create_separator(target_width, sep_h, "<E#N#D>")
+                    stacked_images.append(sep)
+
+            stacked_img = np.vstack(stacked_images)
+
+            # --- OCR
+            encoded_img = self.encode_image(stacked_img)
+            raw_text = self._get_gemini_batch_ocr(encoded_img)
+
+            parts = self._parse_ocr_output(raw_text, len(batch_blocks))
+
+            for blk, text in zip(batch_blocks, parts):
+                blk.text = text
 
         return blk_list
 
-    # ---------------------------
-    # OCR WITH TIMEOUT
-    # ---------------------------
-    def _get_ocr(self, image: Image.Image) -> str:
+    # -------------------------
+    # PARSER
+    # -------------------------
+    def _parse_ocr_output(self, raw_text: str, expected_count: int) -> list[str]:
+        text = raw_text.strip()
 
-        result = [""]
-        error = [None]
+        result = []
 
-        def worker():
-            try:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": image},
-                            {"type": "text", "text": "OCR:"},
-                        ],
-                    }
-                ]
+        if "<E#N#D>" in text:
+            parts = text.split("<E#N#D>")
 
-                inputs = self.processor.apply_chat_template(
-                    messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                    return_dict=True,
-                    return_tensors="pt",
+            for part in parts:
+                part = part.strip()
+
+                if "\n" in part:
+                    sub = [s.strip() for s in part.split("\n")]
+                    result.extend(sub)
+                else:
+                    result.append(part)
+        else:
+            result = [l.strip() for l in text.split("\n")]
+
+        if len(result) < expected_count:
+            result += [""] * (expected_count - len(result))
+        else:
+            result = result[:expected_count]
+
+        return result
+
+    # -------------------------
+    # OCR REQUEST
+    # -------------------------
+    def _get_gemini_batch_ocr(self, base64_image: str) -> str:
+        url = "http://localhost:1234/v1/chat/completions"
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer 123",
+        }
+        # print(f"data:image/jpeg;base64,{base64_image}")
+        payload = {
+            "model": "paddleocr-vl-for-manga",
+            "temperature": 0,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+
+            data = response.json()
+            return data["choices"][0]["message"]["content"].strip()
+
+        except Exception as e:
+            print(f"LM Studio error: {e}")
+            return ""
+
+    # -------------------------
+    # UTILS
+    # -------------------------
+    def _resize_to_width(self, img: np.ndarray, w: int) -> np.ndarray:
+        h, ow = img.shape[:2]
+        scale = w / ow
+        return cv2.resize(img, (w, int(h * scale)))
+
+    # -------------------------
+    # SEPARATOR (BLACK OUTLINE + WHITE TEXT)
+    # -------------------------
+    def _create_separator(self, width: int, height: int, text: str) -> np.ndarray:
+        sep = np.zeros((height, width, 3), dtype=np.uint8)
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = height / 80
+        thickness = max(2, height // 20)
+
+        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+
+        x = (width - tw) // 2
+        y = (height + th) // 2
+
+        # --- BLACK OUTLINE (жирная читаемость)
+        for dx in [-2, -1, 0, 1, 2]:
+            for dy in [-2, -1, 0, 1, 2]:
+                cv2.putText(
+                    sep,
+                    text,
+                    (x + dx, y + dy),
+                    font,
+                    scale,
+                    (0, 0, 0),
+                    thickness + 2,
+                    cv2.LINE_AA,
                 )
 
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # --- WHITE TEXT
+        cv2.putText(
+            sep,
+            text,
+            (x, y),
+            font,
+            scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
 
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=1024,
-                        do_sample=False,
-                        use_cache=True,
-                    )
-
-                text = self.processor.decode(
-                    outputs[0][inputs["input_ids"].shape[-1] :],
-                    skip_special_tokens=True,
-                ).strip()
-
-                result[0] = text
-
-            except Exception as e:
-                error[0] = e
-
-        thread = threading.Thread(target=worker)
-        thread.start()
-        thread.join(timeout=30)
-
-        if thread.is_alive():
-            print("⛔ OCR TIMEOUT")
-            return ""
-
-        if error[0]:
-            print("⛔ OCR ERROR:", error[0])
-            return ""
-
-        return result[0]
+        return sep

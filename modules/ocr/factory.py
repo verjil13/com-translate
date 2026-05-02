@@ -153,11 +153,11 @@ class OCRFactory:
 
         # Model-specific factory functions
         general = {
-            "Microsoft OCR": lambda s: cls._create_microsoft_ocr(
+            "LMstudio-OCR": lambda s: cls._create_microsoft_ocr(
                 s, "jzhang533/PaddleOCR-VL-For-Manga"),
             "Google Cloud Vision": cls._create_google_ocr,
             "GPT-4.1-mini": lambda s: cls._create_gpt_ocr(s, ocr_model),
-            "Gemini-2.0-Flash": lambda s: cls._create_gemini_ocr(
+            "PaddleVL-1.5-OCR": lambda s: cls._create_gemini_ocr(
                 s, "PaddlePaddle/PaddleOCR-VL-1.5"
             ),
         }
