@@ -4,7 +4,7 @@ import numpy as np
 import threading
 import time
 
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
@@ -16,7 +16,7 @@ class MicrosoftOCR(OCREngine):
     def __init__(self):
         self.model = None
         self.processor = None
-        self.device = "cuda" #if torch.cuda.is_available() else "cpu"
+        self.device = "cuda"
         self.expansion_percentage = 5
 
     # ---------------------------
@@ -30,7 +30,6 @@ class MicrosoftOCR(OCREngine):
     ) -> None:
 
         self.expansion_percentage = expansion_percentage
-
         model_id = model_path or "PaddlePaddle/PaddleOCR-VL-For-Manga"
 
         print("DEVICE:", self.device)
@@ -39,24 +38,64 @@ class MicrosoftOCR(OCREngine):
         try:
             # ---- Processor ----
             self.processor = AutoProcessor.from_pretrained(
-                model_id,                
+                model_id,
+                trust_remote_code=True,
             )
 
-            # -------------------------------
-            # 🔥 FIX FOR max_pixels/min_pixels
-            # -------------------------------
             self._patch_processor_image_size()
+
+            # ---- Config ----
+            config = AutoConfig.from_pretrained(
+                model_id,
+                trust_remote_code=True,
+            )
+
+            # 🔥 ROBUST ROPE FIX
+            if hasattr(config, "rope_scaling"):
+
+                # 1. если строка
+                if isinstance(config.rope_scaling, str):
+                    print("🔧 rope_scaling is string → fixing")
+                    config.rope_scaling = {
+                        "rope_type": "linear",
+                        "factor": 1.0,
+                    }
+
+                # 2. если dict
+                elif isinstance(config.rope_scaling, dict):
+                    rope_type = (
+                        config.rope_scaling.get("rope_type")
+                        or config.rope_scaling.get("type")
+                    )
+
+                    if rope_type in ["default", None]:
+                        print("🔧 Fixing rope_type -> linear")
+                        config.rope_scaling["rope_type"] = "linear"
+
+                    # 💥 КЛЮЧЕВОЕ: добавляем factor если его нет
+                    if "factor" not in config.rope_scaling:
+                        print("🔧 Adding rope factor")
+                        config.rope_scaling["factor"] = 1.0
+
+                # 3. если None / мусор
+                else:
+                    print("🔧 Adding full rope_scaling")
+                    config.rope_scaling = {
+                        "rope_type": "linear",
+                        "factor": 1.0,
+                    }
 
             # ---- Model ----
             self.model = (
-                AutoModelForImageTextToText.from_pretrained(
+                AutoModelForCausalLM.from_pretrained(
                     model_id,
-                    torch_dtype=(
-                        torch.bfloat16 #if self.device == "cuda" else torch.float32
-                    ),
-                    #device_map="auto" if self.device == "cuda" else None,
-                    #trust_remote_code=True,
-                ).to(self.device).eval()
+                    config=config,
+                    trust_remote_code=True,
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=True,
+                )
+                .to(self.device)
+                .eval()
             )
 
             print("✅ Model loaded successfully")
@@ -66,12 +105,12 @@ class MicrosoftOCR(OCREngine):
             raise
 
     # ---------------------------
-    # PATCH FOR BROKEN IMAGE CONFIGS
+    # PATCH IMAGE PROCESSOR
     # ---------------------------
     def _patch_processor_image_size(self):
         """
-        Fix for models that use:
-        {'max_pixels', 'min_pixels'} instead of HF expected size format
+        Fix models with:
+        {'max_pixels', 'min_pixels'}
         """
 
         try:
@@ -81,12 +120,9 @@ class MicrosoftOCR(OCREngine):
                 if hasattr(ip, "size") and isinstance(ip.size, dict):
                     keys = set(ip.size.keys())
 
-                    # PaddleOCR-VL-For-Manga issue
                     if "max_pixels" in keys or "min_pixels" in keys:
-                        # convert to safe default
                         ip.size = {"shortest_edge": 1024}
-
-                        print("🔧 Patched image_processor.size -> shortest_edge=1024")
+                        print("🔧 Patched image_processor.size")
 
         except Exception as e:
             print("⚠️ Patch warning:", e)
@@ -153,8 +189,8 @@ class MicrosoftOCR(OCREngine):
 
                 inputs = self.processor.apply_chat_template(
                     messages,
-                    add_generation_prompt=True,
                     tokenize=True,
+                    add_generation_prompt=True,
                     return_dict=True,
                     return_tensors="pt",
                 )
@@ -164,8 +200,9 @@ class MicrosoftOCR(OCREngine):
                 with torch.no_grad():
                     outputs = self.model.generate(
                         **inputs,
-                        max_new_tokens=2048,
+                        max_new_tokens=1024,
                         do_sample=False,
+                        use_cache=True,
                     )
 
                 text = self.processor.decode(
@@ -183,7 +220,7 @@ class MicrosoftOCR(OCREngine):
         thread.join(timeout=30)
 
         if thread.is_alive():
-            print("⛔ OCR TIMEOUT (10s)")
+            print("⛔ OCR TIMEOUT")
             return ""
 
         if error[0]:
