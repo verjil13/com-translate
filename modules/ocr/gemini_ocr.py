@@ -6,7 +6,8 @@ from transformers import AutoModelForImageTextToText, AutoProcessor
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
-
+import threading
+import time
 
 class GeminiOCR(OCREngine):
     """OCR engine using PaddleOCR-VL (WORKING HF VERSION)"""
@@ -62,10 +63,10 @@ class GeminiOCR(OCREngine):
         return self._process_by_blocks(img, blk_list)
 
     # ---- block processing ----
-    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
 
+    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
+        torch.cuda.empty_cache()
         for blk in blk_list:
-            torch.cuda.empty_cache()
             if blk.bubble_xyxy is not None:
                 x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
@@ -82,55 +83,87 @@ class GeminiOCR(OCREngine):
             cropped = img[y1:y2, x1:x2]
             cropped_pil = Image.fromarray(cropped).convert("RGB")
 
-            blk.text = self._get_ocr(cropped_pil)
+            start = time.time()
+
+            text = self._get_ocr(cropped_pil)
+
+            elapsed = time.time() - start
+            if elapsed > 10:
+                print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
+
+            blk.text = text
 
         return blk_list
 
     # ---- OCR CORE ----
+
+
     def _get_ocr(self, image: Image.Image) -> str:
-        try:
-            PROMPT = "OCR:"
+        result = [""]
+        error = [None]
 
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": PROMPT},
-                    ],
-                }
-            ]
+        def worker():
+            try:
+                PROMPT = "OCR:"
 
-            inputs = self.processor.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt",
-            ).to(self.device)
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image},
+                            {"type": "text", "text": PROMPT},
+                        ],
+                    }
+                ]
 
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=4096,
-                    do_sample=False,
+                inputs = self.processor.apply_chat_template(
+                    messages,
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
                 )
 
-            result = self.processor.decode(
-                outputs[0][inputs["input_ids"].shape[-1] : -1]
-            )
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-            text = result.strip()
+                with torch.no_grad():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=128,
+                        do_sample=False,
+                        use_cache=False,
+                        eos_token_id=self.processor.tokenizer.eos_token_id,
+                        pad_token_id=self.processor.tokenizer.pad_token_id,
+                    )
 
-            # cleanup
-            for prefix in ["OCR:", "OCR :", "Text:", "Answer:", "Answer :"]:
-                if text.startswith(prefix):
-                    text = text[len(prefix) :].strip()
-                    break
+                decoded = self.processor.decode(
+                    outputs[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
+                )
 
-            print(f"[OCR] {repr(text[:100])}")
-            return text
+                result[0] = decoded.strip()
 
-        except Exception as e:
-            print("[OCR ERROR]", e)
+            except Exception as e:
+                error[0] = e
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=10)
+
+        if thread.is_alive():
+            print("⛔ OCR TIMEOUT (10s) — skipping block")
             return ""
+
+        if error[0]:
+            print("⛔ OCR ERROR:", error[0])
+            return ""
+
+        text = result[0]
+
+        # cleanup
+        for prefix in ["OCR:", "OCR :", "Text:", "Answer:", "Answer :"]:
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+
+        print(f"[OCR] {repr(text[:100])}")
+        return text
