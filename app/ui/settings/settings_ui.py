@@ -56,9 +56,9 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.inpainters = ['LaMa', 'AOT']
         self.detectors = ['RT-DETR-v2']
         self.ocr_engines = [
-            self.tr("Default"), 
-            self.tr('LMstudio-OCR'), 
-            self.tr('PaddleVL-1.5-OCR'), 
+            self.tr("Default"),
+            self.tr("PaddleVL-Manga"),
+            self.tr("PaddleVL-1.5-OCR"),
         ]
         self.inpaint_strategy = [self.tr('Resize'), self.tr('Original'), self.tr('Crop')]
         self.themes = [self.tr('Dark'), self.tr('Light')]
@@ -67,7 +67,7 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.credential_services = [
             self.tr("Custom"), 
         ]
-        
+
         self.supported_translators = [
             self.tr("Gemini-3.0-Flash"),
             self.tr("GPT-4.1"),
@@ -77,7 +77,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             self.tr("Deepseek-v3"),
             self.tr("Custom"),
         ]
-        
+
         self.languages = [
             'English', 
             '한국어', 
@@ -89,7 +89,7 @@ class SettingsPageUI(QtWidgets.QWidget):
             'Español', 
             'Italiano', 
         ]
-        
+
         self.nav_cards = []  
         self.current_highlighted_nav = None
 
@@ -242,10 +242,9 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.credits_value_label = self.account_page.credits_value_label
         self.logged_out_widget = self.account_page.logged_out_widget
         self.logged_in_widget = self.account_page.logged_in_widget
-        
+
         # System
         self.check_update_button = self.about_page.check_update_button
-
 
         # Add pages to stacked widget (order must match navbar order)
         self.stacked_widget.addWidget(self.personalization_page)
@@ -260,7 +259,7 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.stacked_widget.addWidget(self.about_page)
 
         settings_layout = QtWidgets.QHBoxLayout()
-        
+
         # Create a separate scroll area for the left navbar
         navbar_scroll = QtWidgets.QScrollArea()
         navbar_scroll.setWidget(self._create_navbar_widget())
@@ -271,7 +270,7 @@ class SettingsPageUI(QtWidgets.QWidget):
         # Keep navbar at a reasonable width without over-constraining layout
         navbar_scroll.setMinimumWidth(200)
         navbar_scroll.setMaximumWidth(260)
-        
+
         settings_layout.addWidget(navbar_scroll)
         settings_layout.addWidget(MDivider(orientation=QtCore.Qt.Orientation.Vertical))
 

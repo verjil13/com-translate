@@ -1,58 +1,62 @@
 from PIL import Image
-import torch
 import numpy as np
-
-from transformers import AutoModelForImageTextToText, AutoProcessor
-
-from .base import OCREngine
-from ..utils.textblock import TextBlock, adjust_text_line_coordinates
+import cv2
+import base64
+import os
 import threading
 import time
 
+from llama_cpp import Llama
+from llama_cpp.llama_chat_format import PaddleOCRChatHandler
+
+from .base import OCREngine
+from ..utils.textblock import TextBlock, adjust_text_line_coordinates
+from app.ui.settings.settings_page import SettingsPage
+import gc
+import torch
 
 class GeminiOCR(OCREngine):
-    """OCR engine using PaddleOCR-VL (WORKING HF VERSION)"""
+    """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
 
+    # -------------------------
+    # INIT
+    # -------------------------
     def __init__(self):
-        self.model = None
-        self.processor = None
-        self.device = "cuda"
+        self.api_key = None
         self.expansion_percentage = 5
+        self.model = ""
+
+        self.llm = None  # ← локальная модель
 
     # -------------------------
     # INIT
     # -------------------------
     def initialize(
         self,
-        settings=None,
-        model_path: str = None,
+        settings: SettingsPage,
+        model: str = "Gemini-2.0-Flash",
         expansion_percentage: int = 5,
     ) -> None:
-
         self.expansion_percentage = expansion_percentage
 
-        model_id = "PaddlePaddle/PaddleOCR-VL-1.5"
+        BASE_DIR = os.getcwd()
 
-        print("DEVICE:", self.device)
-        print("Loading model:", model_id)
+        MODEL_PATH = os.path.join(
+            BASE_DIR, "models", "PaddleOCR-VL-For-Manga-BF16.gguf"
+        )
+        MMPROJ_PATH = os.path.join(
+            BASE_DIR, "models", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
+        )
 
-        try:
-            self.processor = AutoProcessor.from_pretrained(model_id)
-
-            self.model = (
-                AutoModelForImageTextToText.from_pretrained(
-                    model_id,
-                    torch_dtype=torch.bfloat16,
-                )
-                .to(self.device)
-                .eval()
-            )
-
-            print("✅ PaddleOCR-VL loaded successfully")
-
-        except Exception as e:
-            print("❌ Model loading error:", e)
-            raise
+        self.llm = Llama(
+            model_path=MODEL_PATH,
+            chat_handler=PaddleOCRChatHandler(
+                clip_model_path=MMPROJ_PATH,
+            ),
+            n_gpu_layers=-1,
+            n_ctx=0,
+            n_batch=1024,
+        )
 
     # -------------------------
     # PUBLIC API
@@ -61,18 +65,24 @@ class GeminiOCR(OCREngine):
         return self._process_by_blocks(img, blk_list)
 
     # -------------------------
-    # RESIZE FUNCTION (NEW)
+    # RESIZE FUNCTION
     # -------------------------
+    def unload_model(self):
+        if self.llm is not None:
+            self.llm = None
+            gc.collect()
+            torch.cuda.empty_cache()
+
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 384       
+        max_size = 512
 
-        if min(w,h)>=48:
-            w/=1.5
-            h/=1.5
+        # if min(w, h) >= 48:
+        #    w /= 1.5
+        #    h /= 1.5
 
-        if w <= max_size and h <= max_size:           
+        if w <= max_size and h <= max_size:
             return img.resize((int(w), int(h)), Image.BILINEAR)
 
         scale = min(max_size / w, max_size / h)
@@ -104,8 +114,7 @@ class GeminiOCR(OCREngine):
             cropped = img[y1:y2, x1:x2]
             cropped_pil = Image.fromarray(cropped).convert("RGB")
 
-            # 🔥 RESIZE FIX HERE
-            cropped_pil = self._resize_if_needed(cropped_pil) #384
+            cropped_pil = self._resize_if_needed(cropped_pil)
 
             start = time.time()
             blk.text = self._get_ocr(cropped_pil)
@@ -114,8 +123,7 @@ class GeminiOCR(OCREngine):
             if elapsed > 10:
                 print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
 
-        torch.cuda.empty_cache()
-
+        self.unload_model()
         return blk_list
 
     # -------------------------
@@ -128,46 +136,33 @@ class GeminiOCR(OCREngine):
 
         def worker():
             try:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": image},
-                            {"type": "text", "text": "OCR:"},
-                        ],
-                    }
-                ]
+                # --- PIL → base64 ---
+                buffer = cv2.imencode(".jpg", np.array(image))[1]
+                base64_img = base64.b64encode(buffer).decode("utf-8")
 
-                inputs = self.processor.apply_chat_template(
-                    messages,
-                    add_generation_prompt=True,
-                    tokenize=True,
-                    return_dict=True,
-                    return_tensors="pt",
+                data_uri = f"data:image/jpeg;base64,{base64_img}"
+
+                response = self.llm.create_chat_completion(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "OCR:",
+                                },
+                            ],
+                        }
+                    ],
+                    temperature=0,
+                    max_tokens=1024,
                 )
 
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-                with torch.no_grad():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=2048,
-                        #do_sample=False,
-                        #use_cache=False,
-                        #eos_token_id=self.processor.tokenizer.eos_token_id,
-                        #pad_token_id=self.processor.tokenizer.pad_token_id,
-                        repetition_penalty=1.1,
-                        temperature=0.0,  # детерминистично
-                        top_p=1.0,
-                        early_stopping=True,  # может помо
-                    )
-
-                decoded = self.processor.decode(
-                    outputs[0][inputs["input_ids"].shape[-1] :],
-                    skip_special_tokens=True,
-                )
-
-                result[0] = decoded.strip()
+                result[0] = response["choices"][0]["message"]["content"].strip()
 
             except Exception as e:
                 error[0] = e

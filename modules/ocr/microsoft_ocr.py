@@ -1,20 +1,44 @@
+from PIL import Image
 import numpy as np
-import requests
 import cv2
+import base64
+import os
+import threading
+import time
+
+from llama_cpp import Llama
+from llama_cpp.llama_chat_format import PaddleOCRChatHandler
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
 from app.ui.settings.settings_page import SettingsPage
-
+import gc
+import torch
 
 class MicrosoftOCR(OCREngine):
-    """OCR engine using LM Studio (PaddleOCR-VL) with strict sequential batching."""
+    """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
 
+    def __init__(self):
+        self.model = None
+        self.processor = None
+        self.device = "cuda"
+        self.expansion_percentage = 5
+
+        self.llm = None  # ← GGUF модель
+
+    # -------------------------
+    # INIT
+    # -------------------------
     def __init__(self):
         self.api_key = None
         self.expansion_percentage = 5
         self.model = ""
 
+        self.llm = None  # ← локальная модель
+
+    # -------------------------
+    # INIT
+    # -------------------------
     def initialize(
         self,
         settings: SettingsPage,
@@ -23,22 +47,62 @@ class MicrosoftOCR(OCREngine):
     ) -> None:
         self.expansion_percentage = expansion_percentage
 
-    # -------------------------
-    # MAIN PIPELINE
-    # -------------------------
-    def process_image(
-        self, img: np.ndarray, blk_list: list[TextBlock]
-    ) -> list[TextBlock]:
+        BASE_DIR = os.getcwd()
 
-        crops = []
-        valid_blocks = []
+        MODEL_PATH = os.path.join(BASE_DIR, "models", "PaddleOCR-VL-1.5-BF16.gguf")
+        MMPROJ_PATH = os.path.join(BASE_DIR, "models", "mmproj-BF16.gguf")
 
-        # -------------------------
-        # 1. crop blocks
-        # -------------------------
+        self.llm = Llama(
+            model_path=MODEL_PATH,
+            chat_handler=PaddleOCRChatHandler(
+                clip_model_path=MMPROJ_PATH,
+            ),
+            n_gpu_layers=-1,
+            n_ctx=0,
+            n_batch=1024,
+        )
+
+    def unload_model(self):
+        if self.llm is not None:
+            self.llm = None
+            gc.collect()
+            torch.cuda.empty_cache()
+    # -------------------------
+    # PUBLIC API
+    # -------------------------
+    def process_image(self, img: np.ndarray, blk_list: list[TextBlock]):
+        return self._process_by_blocks(img, blk_list)
+
+    # -------------------------
+    # RESIZE FUNCTION
+    # -------------------------
+    def _resize_if_needed(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
+
+        max_size = 512
+
+        # if min(w, h) >= 48:
+        #    w /= 1.5
+        #    h /= 1.5
+
+        if w <= max_size and h <= max_size:
+            return img.resize((int(w), int(h)), Image.BILINEAR)
+
+        scale = min(max_size / w, max_size / h)
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+
+        return img.resize((new_w, new_h), Image.BILINEAR)
+
+    # -------------------------
+    # BLOCK PROCESSING
+    # -------------------------
+    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
+
         for blk in blk_list:
+
             if blk.bubble_xyxy is not None:
-                x1, y1, x2, y2 = blk.bubble_xyxy
+                x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
                 x1, y1, x2, y2 = adjust_text_line_coordinates(
                     blk.xyxy,
@@ -47,218 +111,84 @@ class MicrosoftOCR(OCREngine):
                     img,
                 )
 
-            if (
-                x1 < x2
-                and y1 < y2
-                and x1 >= 0
-                and y1 >= 0
-                and x2 <= img.shape[1]
-                and y2 <= img.shape[0]
-            ):
-                crops.append(img[y1:y2, x1:x2])
-                valid_blocks.append(blk)
+            if x1 >= x2 or y1 >= y2:
+                continue
 
-        if not crops:
-            return blk_list
+            cropped = img[y1:y2, x1:x2]
+            cropped_pil = Image.fromarray(cropped).convert("RGB")
 
-        # -------------------------
-        # 2. SEQUENTIAL GREEDY BATCHING
-        # -------------------------
-        MAX_BATCH_SIZE = 3
-        RATIO_LIMIT = 2.0
+            cropped_pil = self._resize_if_needed(cropped_pil)
 
-        batches = []
-        i = 0
-        n = len(crops)
+            start = time.time()
+            blk.text = self._get_ocr(cropped_pil)
 
-        while i < n:
-
-            current = [crops[i]]
-            current_blocks = [valid_blocks[i]]
-            j = i + 1
-
-            while j < n and len(current) < MAX_BATCH_SIZE:
-
-                candidate = current + [crops[j]]
-
-                widths = [c.shape[1] for c in candidate]
-                ratio_ok = max(widths) / min(widths) <= RATIO_LIMIT
-
-                if ratio_ok:
-                    current.append(crops[j])
-                    current_blocks.append(valid_blocks[j])
-                    j += 1
-                else:
-                    break
-
-            batches.append((current, current_blocks))
-            i = j
-
-        # -------------------------
-        # 3. PROCESS EACH BATCH
-        # -------------------------
-        MAX_WIDTH = 768
-        MIN_WIDTH = 96
-
-        for batch_imgs, batch_blocks in batches:
-
-            # --- dynamic width
-            target_width = max(c.shape[1] for c in batch_imgs)
-            target_width = min(max(target_width, MIN_WIDTH), MAX_WIDTH)
-
-            # --- resize ВСЕХ заранее
-            resized = []
-            for crop in batch_imgs:
-                if crop.shape[1] != target_width:
-                    crop = self._resize_to_width(crop, target_width)
-                resized.append(crop)
-
-            # --- средняя высота
-            heights = [img.shape[0] for img in resized]
-            avg_h = sum(heights) / len(heights)
-
-            sep_h = int(avg_h * 0.25)
-            sep_h = max(16, min(sep_h, 64))
-
-            # --- stack
-            stacked_images = []
-
-            for k, img_r in enumerate(resized):
-                stacked_images.append(img_r)
-
-                if k < len(resized) - 1:
-                    sep = self._create_separator(target_width, sep_h, "<E#N#D>")
-                    stacked_images.append(sep)
-
-            stacked_img = np.vstack(stacked_images)
-
-            # --- OCR
-            encoded_img = self.encode_image(stacked_img)
-            raw_text = self._get_gemini_batch_ocr(encoded_img)
-
-            parts = self._parse_ocr_output(raw_text, len(batch_blocks))
-
-            for blk, text in zip(batch_blocks, parts):
-                blk.text = text
-
+            elapsed = time.time() - start
+            if elapsed > 10:
+                print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
+                
+        self.unload_model()
         return blk_list
 
     # -------------------------
-    # PARSER
+    # OCR CORE (THREAD + TIMEOUT)
     # -------------------------
-    def _parse_ocr_output(self, raw_text: str, expected_count: int) -> list[str]:
-        text = raw_text.strip()
+    def _get_ocr(self, image: Image.Image) -> str:
 
-        result = []
+        result = [""]
+        error = [None]
 
-        if "<E#N#D>" in text:
-            parts = text.split("<E#N#D>")
+        def worker():
+            try:
+                # --- PIL → base64 ---
+                buffer = cv2.imencode(".jpg", np.array(image))[1]
+                base64_img = base64.b64encode(buffer).decode("utf-8")
 
-            for part in parts:
-                part = part.strip()
+                data_uri = f"data:image/jpeg;base64,{base64_img}"
 
-                if "\n" in part:
-                    sub = [s.strip() for s in part.split("\n")]
-                    result.extend(sub)
-                else:
-                    result.append(part)
-        else:
-            result = [l.strip() for l in text.split("\n")]
-
-        if len(result) < expected_count:
-            result += [""] * (expected_count - len(result))
-        else:
-            result = result[:expected_count]
-
-        return result
-
-    # -------------------------
-    # OCR REQUEST
-    # -------------------------
-    def _get_gemini_batch_ocr(self, base64_image: str) -> str:
-        url = "http://localhost:1234/v1/chat/completions"
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer 123",
-        }
-        # print(f"data:image/jpeg;base64,{base64_image}")
-        payload = {
-            "model": "paddleocr-vl-for-manga",
-            "temperature": 0,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
+                response = self.llm.create_chat_completion(
+                    messages=[
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "OCR:",
+                                },
+                            ],
+                        }
                     ],
-                }
-            ],
-        }
-
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-            response.raise_for_status()
-
-            data = response.json()
-            return data["choices"][0]["message"]["content"].strip()
-
-        except Exception as e:
-            print(f"LM Studio error: {e}")
-            return ""
-
-    # -------------------------
-    # UTILS
-    # -------------------------
-    def _resize_to_width(self, img: np.ndarray, w: int) -> np.ndarray:
-        h, ow = img.shape[:2]
-        scale = w / ow
-        return cv2.resize(img, (w, int(h * scale)))
-
-    # -------------------------
-    # SEPARATOR (BLACK OUTLINE + WHITE TEXT)
-    # -------------------------
-    def _create_separator(self, width: int, height: int, text: str) -> np.ndarray:
-        sep = np.zeros((height, width, 3), dtype=np.uint8)
-
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        scale = height / 80
-        thickness = max(2, height // 20)
-
-        (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
-
-        x = (width - tw) // 2
-        y = (height + th) // 2
-
-        # --- BLACK OUTLINE (жирная читаемость)
-        for dx in [-2, -1, 0, 1, 2]:
-            for dy in [-2, -1, 0, 1, 2]:
-                cv2.putText(
-                    sep,
-                    text,
-                    (x + dx, y + dy),
-                    font,
-                    scale,
-                    (0, 0, 0),
-                    thickness + 2,
-                    cv2.LINE_AA,
+                    temperature=0,
+                    max_tokens=1024,
                 )
 
-        # --- WHITE TEXT
-        cv2.putText(
-            sep,
-            text,
-            (x, y),
-            font,
-            scale,
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA,
-        )
+                result[0] = response["choices"][0]["message"]["content"].strip()
 
-        return sep
+            except Exception as e:
+                error[0] = e
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=30)
+
+        if thread.is_alive():
+            print("⛔ OCR TIMEOUT (30s)")
+            return ""
+
+        if error[0]:
+            print("⛔ OCR ERROR:", error[0])
+            return ""
+
+        text = result[0]
+
+        # cleanup
+        for prefix in ["OCR:", "OCR :", "Text:", "Answer:", "Answer :"]:
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+
+        print(f"[OCR] {repr(text[:100])}")
+        return text
