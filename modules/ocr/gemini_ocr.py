@@ -86,8 +86,6 @@ class GeminiOCR(OCREngine):
     # -------------------------
     def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
 
-        torch.cuda.empty_cache()
-
         for blk in blk_list:
 
             if blk.bubble_xyxy is not None:
@@ -115,6 +113,8 @@ class GeminiOCR(OCREngine):
             elapsed = time.time() - start
             if elapsed > 10:
                 print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
+
+        torch.cuda.empty_cache()
 
         return blk_list
 
@@ -152,10 +152,14 @@ class GeminiOCR(OCREngine):
                     outputs = self.model.generate(
                         **inputs,
                         max_new_tokens=2048,
-                        do_sample=False,
-                        use_cache=False,
-                        eos_token_id=self.processor.tokenizer.eos_token_id,
-                        pad_token_id=self.processor.tokenizer.pad_token_id,
+                        #do_sample=False,
+                        #use_cache=False,
+                        #eos_token_id=self.processor.tokenizer.eos_token_id,
+                        #pad_token_id=self.processor.tokenizer.pad_token_id,
+                        repetition_penalty=1.1,
+                        temperature=0.0,  # детерминистично
+                        top_p=1.0,
+                        early_stopping=True,  # может помо
                     )
 
                 decoded = self.processor.decode(
