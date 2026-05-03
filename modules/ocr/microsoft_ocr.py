@@ -49,8 +49,14 @@ class MicrosoftOCR(OCREngine):
 
         BASE_DIR = os.getcwd()
 
-        MODEL_PATH = os.path.join(BASE_DIR, "models", "PaddleOCR-VL-1.5-BF16.gguf")
-        MMPROJ_PATH = os.path.join(BASE_DIR, "models", "mmproj-BF16.gguf")
+        MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
+        MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
+
+        # MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
+        # MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
+
+        # MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q4", "PaddleOCR-VL-1.5-Q4_K_M.gguf")
+        # MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q4", "mmproj-PaddleOCR-VL-1.5-Q4_1.gguf")
 
         self.llm = Llama(
             model_path=MODEL_PATH,
@@ -97,6 +103,7 @@ class MicrosoftOCR(OCREngine):
     # -------------------------
     # BLOCK PROCESSING
     # -------------------------
+    
     def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
 
         for blk in blk_list:
@@ -125,7 +132,7 @@ class MicrosoftOCR(OCREngine):
             elapsed = time.time() - start
             if elapsed > 10:
                 print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
-                
+
         self.unload_model()
         return blk_list
 
@@ -152,7 +159,8 @@ class MicrosoftOCR(OCREngine):
                             "content": [
                                 {
                                     "type": "image_url",
-                                    "image_url": {"url": data_uri},
+                                    # "image_url": {"url": data_uri},
+                                    "image_url": {"url": cropped},
                                 },
                                 {
                                     "type": "text",

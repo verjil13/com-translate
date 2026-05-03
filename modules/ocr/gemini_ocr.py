@@ -42,10 +42,10 @@ class GeminiOCR(OCREngine):
         BASE_DIR = os.getcwd()
 
         MODEL_PATH = os.path.join(
-            BASE_DIR, "models", "PaddleOCR-VL-For-Manga-BF16.gguf"
+            BASE_DIR, "models\PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-BF16.gguf"
         )
         MMPROJ_PATH = os.path.join(
-            BASE_DIR, "models", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
+            BASE_DIR, "models\PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
         )
 
         self.llm = Llama(
