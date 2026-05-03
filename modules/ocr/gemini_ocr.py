@@ -96,8 +96,7 @@ class GeminiOCR(OCREngine):
             torch.cuda.empty_cache()
             gc.collect()
             torch.cuda.empty_cache()
-    
-    
+
     def process_image(self, img: np.ndarray, blk_list: list[TextBlock]):
         return self._process_by_blocks(img, blk_list)
 
@@ -219,5 +218,24 @@ class GeminiOCR(OCREngine):
                 text = text[len(prefix) :].strip()
                 break
 
+        text = self._normalize_text(text)
+
         print(f"[OCR] {repr(text[:100])}")
         return text
+    
+    def _normalize_text(self, text: str) -> str:
+        """
+        - заменяет переносы строк на пробелы
+        - убирает лишние пробелы
+        """
+
+        if not text:
+            return ""
+
+        # заменяем переносы строк и табы
+        text = text.replace("\n", " ").replace("\t", " ")
+
+        # убираем множественные пробелы
+        text = " ".join(text.split())
+
+        return text.strip()

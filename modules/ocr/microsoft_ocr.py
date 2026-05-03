@@ -214,5 +214,24 @@ class MicrosoftOCR(OCREngine):
                 text = text[len(prefix) :].strip()
                 break
 
+        text = self._normalize_text(text)
+        
         print(f"[OCR] {repr(text[:100])}")
         return text
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        - заменяет переносы строк на пробелы
+        - убирает лишние пробелы
+        """
+
+        if not text:
+            return ""
+
+        # заменяем переносы строк и табы
+        text = text.replace("\n", " ").replace("\t", " ")
+
+        # убираем множественные пробелы
+        text = " ".join(text.split())
+
+        return text.strip()
