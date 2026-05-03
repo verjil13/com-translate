@@ -17,15 +17,6 @@ import torch
 
 class MicrosoftOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
-
-    def __init__(self):
-        self.model = None
-        self.processor = None
-        self.device = "cuda"
-        self.expansion_percentage = 5
-
-        self.llm = None  # ← GGUF модель
-
     # -------------------------
     # INIT
     # -------------------------
@@ -46,6 +37,10 @@ class MicrosoftOCR(OCREngine):
         expansion_percentage: int = 5,
     ) -> None:
         self.expansion_percentage = expansion_percentage
+
+        if self.llm is not None:
+            print("🔄 Unloading previous model...")
+            self.unload_model()
 
         BASE_DIR = os.getcwd()
 
@@ -70,7 +65,33 @@ class MicrosoftOCR(OCREngine):
 
     def unload_model(self):
         if self.llm is not None:
+            print("🔄 Unloading previous model...")
+
+            # Принудительный cleanup llama.cpp
+            try:
+                if hasattr(self.llm, "close"):
+                    self.llm.close()
+            except:
+                pass
+
+            try:
+                if hasattr(self.llm, "_model"):
+                    self.llm._model = None
+                if hasattr(self.llm, "ctx"):
+                    self.llm.ctx = None
+            except:
+                pass
+
+            try:
+                del self.llm
+            except:
+                pass
+
             self.llm = None
+            self.current_model = None
+
+            gc.collect()
+            torch.cuda.empty_cache()
             gc.collect()
             torch.cuda.empty_cache()
     # -------------------------
@@ -85,11 +106,7 @@ class MicrosoftOCR(OCREngine):
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 512
-
-        # if min(w, h) >= 48:
-        #    w /= 1.5
-        #    h /= 1.5
+        max_size = 768
 
         if w <= max_size and h <= max_size:
             return img.resize((int(w), int(h)), Image.BILINEAR)
@@ -103,7 +120,7 @@ class MicrosoftOCR(OCREngine):
     # -------------------------
     # BLOCK PROCESSING
     # -------------------------
-    
+
     def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
 
         for blk in blk_list:
@@ -133,7 +150,6 @@ class MicrosoftOCR(OCREngine):
             if elapsed > 10:
                 print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
 
-        self.unload_model()
         return blk_list
 
     # -------------------------
@@ -159,8 +175,8 @@ class MicrosoftOCR(OCREngine):
                             "content": [
                                 {
                                     "type": "image_url",
-                                    # "image_url": {"url": data_uri},
-                                    "image_url": {"url": cropped},
+                                     "image_url": {"url": data_uri},
+                                    
                                 },
                                 {
                                     "type": "text",
