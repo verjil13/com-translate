@@ -50,3 +50,6 @@ pip uninstall paddlepaddle-gpu -y
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
 pip install D:\ocr\llama\llama_cpp_python-0.3.37+cu128.basic-cp312-cp312-win_amd64.whl
+
+for YOLO
+pip install ultralytics

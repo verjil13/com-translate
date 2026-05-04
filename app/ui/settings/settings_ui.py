@@ -54,7 +54,10 @@ class SettingsPageUI(QtWidgets.QWidget):
         self.credential_widgets = {}
 
         self.inpainters = ['LaMa', 'AOT']
-        self.detectors = ['RT-DETR-v2']
+        self.detectors = [
+            self.tr("RT-DETR-v2"),
+            self.tr("YOLO-PT"),
+        ]
         self.ocr_engines = [
             self.tr("Default"),
             self.tr("PaddleVL-Manga"),
@@ -132,7 +135,8 @@ class SettingsPageUI(QtWidgets.QWidget):
             "AOT": "AOT",
 
             # Detector mappings
-            "RT-DETR-v2": "RT-DETR-v2",
+            self.tr("RT-DETR-v2"): "RT-DETR-v2",
+            self.tr("YOLO-PT") : "YOLO-PT",
 
             # HD Strategy mappings
             self.tr("Resize"): "Resize",
