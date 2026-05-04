@@ -81,14 +81,78 @@ class YOLOPTDetection(DetectionEngine):
             else np.empty((0, 4), dtype=np.float32)
         )
 
+        # 🔥 ФИЛЬТРАЦИЯ
+        text_boxes = self._filter_boxes(
+            text_boxes,
+            image.shape,
+            max_rel_area=0.4,   # режем огромные блоки
+            max_inside=2        # убираем "контейнеры"
+        )
+        
+        bubble_boxes = self._filter_boxes(
+            bubble_boxes,
+            image.shape,
+            max_rel_area=0.9,   # пузыри можно оставлять большими
+            max_inside=10
+        )
+
         # 🔥 очистка кэша после обработки страницы
         self._clear_cache()
-
-        print(torch.cuda.memory_allocated() / 1024**3)
-        print(torch.cuda.memory_reserved() / 1024**3)
-
+        
         return self.create_text_blocks(
             image,
             text_boxes,
             bubble_boxes,
         )
+
+
+    def _filter_boxes(self, boxes: np.ndarray, image_shape, max_rel_area=0.4, max_inside=2):
+        """
+        Фильтрация боксов:
+        - удаляет слишком большие
+        - удаляет боксы, которые содержат много других
+
+        boxes: (N, 4)
+        """
+        if len(boxes) == 0:
+            return boxes
+
+        H, W = image_shape[:2]
+        img_area = H * W
+
+        def contains(big, small):
+            return (
+                big[0] <= small[0]
+                and big[1] <= small[1]
+                and big[2] >= small[2]
+                and big[3] >= small[3]
+            )
+
+        filtered = []
+
+        for i, b1 in enumerate(boxes):
+            x1, y1, x2, y2 = b1
+            area = (x2 - x1) * (y2 - y1)
+            rel_area = area / img_area
+
+            # ❌ слишком большой бокс
+            if rel_area > max_rel_area:
+                continue
+
+            # ❌ содержит слишком много других
+            inside = 0
+            for j, b2 in enumerate(boxes):
+                if i == j:
+                    continue
+                if contains(b1, b2):
+                    inside += 1
+
+            if inside > max_inside:
+                continue
+
+            filtered.append(b1)
+
+        if not filtered:
+            return np.empty((0, 4), dtype=np.float32)
+
+        return np.array(filtered, dtype=np.float32)
