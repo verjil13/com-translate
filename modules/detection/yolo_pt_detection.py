@@ -38,7 +38,12 @@ class YOLOPTDetection(DetectionEngine):
 
     def detect(self, image: np.ndarray):
         # inference
-        results = self.model(image)[0]
+        results = self.model.predict(
+            image,
+            device=self.device,
+            conf=0.8,   # 👈 чувствительность 12s -> 0.55; 12x -> 0.8
+            iou=0.35     # 👈 NMS фильтр
+        )[0]
 
         text_boxes = []
         bubble_boxes = []
@@ -77,6 +82,9 @@ class YOLOPTDetection(DetectionEngine):
 
         # 🔥 очистка кэша после обработки страницы
         self._clear_cache()
+        
+        print(torch.cuda.memory_allocated() / 1024**3)
+        print(torch.cuda.memory_reserved() / 1024**3)
 
         return self.create_text_blocks(
             image,
