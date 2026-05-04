@@ -37,12 +37,13 @@ class YOLOPTDetection(DetectionEngine):
             torch.cuda.ipc_collect()
 
     def detect(self, image: np.ndarray):
-        # inference
-        results = self.model.predict(
+        results = self.model(
             image,
-            device=self.device,
-            conf=0.8,   # 👈 чувствительность 12s -> 0.55; 12x -> 0.8
-            iou=0.35     # 👈 NMS фильтр
+            conf=0.75,  # ниже → ловит больше текста
+            iou=0.25,  # аккуратнее с перекрытиями
+            # imgsz=1024,    # важно для мелкого текста
+            max_det=200,
+            augment=True,
         )[0]
 
         text_boxes = []
@@ -82,7 +83,7 @@ class YOLOPTDetection(DetectionEngine):
 
         # 🔥 очистка кэша после обработки страницы
         self._clear_cache()
-        
+
         print(torch.cuda.memory_allocated() / 1024**3)
         print(torch.cuda.memory_reserved() / 1024**3)
 
