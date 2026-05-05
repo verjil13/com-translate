@@ -8,9 +8,9 @@ pip install -r requirements.txt
 
 for GPU
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-conda install -c nvidia cuda-nvrtc=12.9.86 cuda=12.9 cudnn=9.14.0.64
-
-Windows install CUDA_12.8, cudnn_9.8. 
+python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
+pip install D:\ocr\llama\llama_cpp_python-0.3.37+cu128.basic-cp312-cp312-win_amd64.whl
+pip install ultralytics
 
 ////
 conda env remove -p .\env #удаление 
@@ -20,11 +20,11 @@ conda env create -f env.yml -p .\env #создание с экспортом и�
 1)
 ///архивация окружения
 conda activate .\env
-conda pack -p .\env -o env-win-cu129.tar.gz
+conda pack -p .\env -o env-win-cu13.tar.gz
 
 //восстановление окружения
 mkdir env
-tar -xzf env-win-cu129.tar.gz -C env
+tar -xzf env-win-cu13.tar.gz -C env
 
 env\Scripts\activate
 conda-unpack
@@ -48,8 +48,7 @@ pip uninstall llama-cpp-python -y
 pip uninstall paddlepaddle-gpu -y
 
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-python -m pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu130/
-pip install D:\ocr\llama\llama_cpp_python-0.3.37+cu128.basic-cp312-cp312-win_amd64.whl
 
-for YOLO
+
+
 pip install ultralytics
