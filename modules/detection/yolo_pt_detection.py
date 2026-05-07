@@ -29,7 +29,7 @@ class YOLOPTDetection(DetectionEngine):
     def _clear_cache(self):
         """
         Очистка GPU/CPU кэша после инференса страницы
-        """
+        """        
         gc.collect()
 
         if torch.cuda.is_available():
@@ -39,7 +39,7 @@ class YOLOPTDetection(DetectionEngine):
     def detect(self, image: np.ndarray):
         results = self.model(
             image,
-            conf=0.75,  # ниже → ловит больше текста
+            conf=0.15,  # ниже → ловит больше текста
             iou=0.25,  # аккуратнее с перекрытиями
             # imgsz=1024,    # важно для мелкого текста
             max_det=200,
@@ -88,7 +88,7 @@ class YOLOPTDetection(DetectionEngine):
             max_rel_area=0.4,   # режем огромные блоки
             max_inside=2        # убираем "контейнеры"
         )
-        
+
         bubble_boxes = self._filter_boxes(
             bubble_boxes,
             image.shape,
@@ -98,7 +98,7 @@ class YOLOPTDetection(DetectionEngine):
 
         # 🔥 очистка кэша после обработки страницы
         self._clear_cache()
-        
+
         return self.create_text_blocks(
             image,
             text_boxes,
@@ -111,6 +111,7 @@ class YOLOPTDetection(DetectionEngine):
         Фильтрация боксов:
         - удаляет слишком большие
         - удаляет боксы, которые содержат много других
+        - расширяет слишком высокие и узкие боксы
 
         boxes: (N, 4)
         """
@@ -132,7 +133,11 @@ class YOLOPTDetection(DetectionEngine):
 
         for i, b1 in enumerate(boxes):
             x1, y1, x2, y2 = b1
-            area = (x2 - x1) * (y2 - y1)
+
+            w = x2 - x1
+            h = y2 - y1
+
+            area = w * h
             rel_area = area / img_area
 
             # ❌ слишком большой бокс
@@ -150,7 +155,17 @@ class YOLOPTDetection(DetectionEngine):
             if inside > max_inside:
                 continue
 
-            filtered.append(b1)
+            # ✅ слишком высокий и узкий —
+            # расширяем по ширине в 3 раза
+            if h > w * 3:
+                x1 -= w
+                x2 += w
+
+                # защита от выхода за границы
+                x1 = max(0, x1)
+                x2 = min(W, x2)
+
+            filtered.append([x1, y1, x2, y2])
 
         if not filtered:
             return np.empty((0, 4), dtype=np.float32)
