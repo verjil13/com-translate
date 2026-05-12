@@ -17,7 +17,7 @@ class YOLOPTDetection(DetectionEngine):
 
         from ultralytics import YOLO
 
-        model_path = r"models\detection\best_12m.pt"
+        model_path = r"models\detection\best_12m_v2.pt"
         self.model = YOLO(model_path)
 
         # совместимость
@@ -41,7 +41,7 @@ class YOLOPTDetection(DetectionEngine):
             image,
             conf=0.1,  # ниже → ловит больше текста
             iou=0.25,  # аккуратнее с перекрытиями
-            imgsz=1024,    # важно для мелкого текста
+            imgsz=896,#1024,    # важно для мелкого текста
             max_det=200,
             augment=True,
         )[0]

@@ -23,7 +23,6 @@ from modules.utils.language_utils import get_language_code
 from dataclasses import dataclass
 
 
-
 @dataclass
 class TextRenderingSettings:
     alignment_id: int
@@ -419,8 +418,12 @@ def pyside_word_wrap(
 
     # --- split слова (ТОЛЬКО если нужно) ---
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
+        if len(word) <= 5:
+            return [word]
+        
         best_i = 0
         best_diff = float("inf")
+        
 
         for i in range(1, len(word)):
             left = word[:i]
@@ -464,18 +467,19 @@ def pyside_word_wrap(
         current = ""
 
         flag = 0
+
         for word in words:
             if not current:
                 current = word
                 continue
-
+            
             test = current + " " + word
 
             if flag <3:
                 condition = target_width
             else:
                 condition = roi_width
-                
+
             if metrics.horizontalAdvance(test) <= condition:#target_width:
                 current = test                
                 flag += 1 
@@ -494,11 +498,11 @@ def pyside_word_wrap(
     # =========================
     best_size = min_font_size
     allow_split = False
-    
+
     step = 0.1
     size = max_font_size
 
-    #for size in range(max_font_size, min_font_size - 1, -1):
+    # for size in range(max_font_size, min_font_size - 1, -1):
     while size>=min_font_size:
         font = prepare_font(size)
         metrics = QFontMetrics(font)
@@ -519,7 +523,7 @@ def pyside_word_wrap(
         font = prepare_font(best_size)
         wrapped = wrap_text(text, font, allow_split)
         allow_split = False
-        #for size in range(min_font_size, max_font_size):
+        # for size in range(min_font_size, max_font_size):
         while best_size<=max_font_size:            
             font = prepare_font(best_size)
             metrics = QFontMetrics(font)
@@ -532,7 +536,7 @@ def pyside_word_wrap(
     # =========================
     # 2. Теперь учитываем высоту
     # =========================
-    #for size in range(best_size, min_font_size^ - 1, -1):
+    # for size in range(best_size, min_font_size^ - 1, -1):
     while best_size > min_font_size:
         font = prepare_font(best_size)
         metrics = QFontMetrics(font)
@@ -617,6 +621,3 @@ def manual_wrap(
 
         # 3️⃣ Рендерим текст уже в центрированном блоке
         main_page.blk_rendered.emit(wrapped_text, font_size, blk, image_path)
-
-
-
