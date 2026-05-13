@@ -14,6 +14,7 @@ from ..utils.textblock import TextBlock, adjust_text_line_coordinates
 from app.ui.settings.settings_page import SettingsPage
 import gc
 import torch
+import re
 
 class GeminiOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
@@ -46,10 +47,10 @@ class GeminiOCR(OCREngine):
         BASE_DIR = os.getcwd()
 
         MODEL_PATH = os.path.join(
-            BASE_DIR, "models\PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-BF16.gguf"
+            BASE_DIR, "models/PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-BF16.gguf"
         )
         MMPROJ_PATH = os.path.join(
-            BASE_DIR, "models\PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
+            BASE_DIR, "models/PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
         )
 
         self.llm = Llama(
@@ -219,10 +220,11 @@ class GeminiOCR(OCREngine):
                 break
 
         text = self._normalize_text(text)
-
+        text = self.remove_repeated_patterns(text)
         print(f"[OCR] {repr(text[:100])}")
+        
         return text
-    
+
     def _normalize_text(self, text: str) -> str:
         """
         - заменяет переносы строк на пробелы
@@ -239,3 +241,37 @@ class GeminiOCR(OCREngine):
         text = " ".join(text.split())
 
         return text.strip()
+
+
+    def remove_repeated_patterns(
+        self,
+        text: str,
+        max_pattern_len: int = 10,
+        single_char_limit: int = 5,
+        sequence_limit: int = 3,
+    ) -> str:
+
+        if not text:
+            return ""
+
+        max_pattern_len = int(max_pattern_len)
+        single_char_limit = int(single_char_limit)
+        sequence_limit = int(sequence_limit)
+
+        for pattern_len in range(max_pattern_len, 0, -1):
+
+            limit = single_char_limit if pattern_len == 1 else sequence_limit
+
+            regex = re.compile(rf"(.{{{pattern_len}}})(?:\1){{{limit},}}", flags=re.DOTALL)
+
+            replacement = r"\1" * limit
+
+            while True:
+                new_text = regex.sub(replacement, text)
+
+                if new_text == text:
+                    break
+
+                text = new_text
+
+        return text

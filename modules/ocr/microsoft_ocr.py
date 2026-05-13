@@ -44,8 +44,8 @@ class MicrosoftOCR(OCREngine):
 
         BASE_DIR = os.getcwd()
 
-        MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
-        MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
+        MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
+        MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
 
         # MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
         # MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
@@ -215,16 +215,12 @@ class MicrosoftOCR(OCREngine):
                 break
 
         text = self._normalize_text(text)
-        
+        text = self.remove_repeated_patterns(text)
         print(f"[OCR] {repr(text[:100])}")
+        
         return text
 
     def _normalize_text(self, text: str) -> str:
-        """
-        - заменяет переносы строк на пробелы
-        - убирает лишние пробелы
-        """
-
         if not text:
             return ""
 
@@ -235,3 +231,38 @@ class MicrosoftOCR(OCREngine):
         text = " ".join(text.split())
 
         return text.strip()
+
+    def remove_repeated_patterns(
+        self,
+        text: str,
+        max_pattern_len: int = 10,
+        single_char_limit: int = 5,
+        sequence_limit: int = 3,
+    ) -> str:
+
+        if not text:
+            return ""
+
+        max_pattern_len = int(max_pattern_len)
+        single_char_limit = int(single_char_limit)
+        sequence_limit = int(sequence_limit)
+
+        for pattern_len in range(max_pattern_len, 0, -1):
+
+            limit = single_char_limit if pattern_len == 1 else sequence_limit
+
+            regex = re.compile(
+                rf"(.{{{pattern_len}}})(?:\1){{{limit},}}", flags=re.DOTALL
+            )
+
+            replacement = r"\1" * limit
+
+            while True:
+                new_text = regex.sub(replacement, text)
+
+                if new_text == text:
+                    break
+
+                text = new_text
+
+        return text
