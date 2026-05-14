@@ -41,7 +41,7 @@ class YOLOPTDetection(DetectionEngine):
             image,
             conf=0.1,  # ниже → ловит больше текста
             iou=0.25,  # аккуратнее с перекрытиями
-            imgsz=896,#1024,    # важно для мелкого текста
+            imgsz=768,#1024, 896    # важно для мелкого текста
             max_det=200,
             augment=True,
         )[0]

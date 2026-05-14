@@ -60,7 +60,7 @@ class GeminiOCR(OCREngine):
             ),
             n_gpu_layers=-1,
             n_ctx=0,
-            n_batch=1024,
+            n_batch=256,
         )
 
     # -------------------------
@@ -113,7 +113,7 @@ class GeminiOCR(OCREngine):
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 768
+        max_size = 256#768 256
 
         if w <= max_size and h <= max_size:
             return img.resize((int(w), int(h)), Image.BILINEAR)

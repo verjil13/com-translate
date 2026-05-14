@@ -14,6 +14,7 @@ from ..utils.textblock import TextBlock, adjust_text_line_coordinates
 from app.ui.settings.settings_page import SettingsPage
 import gc
 import torch
+import re
 
 class MicrosoftOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
@@ -44,14 +45,14 @@ class MicrosoftOCR(OCREngine):
 
         BASE_DIR = os.getcwd()
 
-        MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
-        MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
+       # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
+       # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
 
-        # MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
-        # MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
+        MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
+        MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
 
-        # MODEL_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q4", "PaddleOCR-VL-1.5-Q4_K_M.gguf")
-        # MMPROJ_PATH = os.path.join(BASE_DIR, "models\PaddleOCR-VL-1.5-Q4", "mmproj-PaddleOCR-VL-1.5-Q4_1.gguf")
+        # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q4", "PaddleOCR-VL-1.5-Q4_K_M.gguf")
+        # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q4", "mmproj-PaddleOCR-VL-1.5-Q4_1.gguf")
 
         self.llm = Llama(
             model_path=MODEL_PATH,
@@ -60,7 +61,7 @@ class MicrosoftOCR(OCREngine):
             ),
             n_gpu_layers=-1,
             n_ctx=0,
-            n_batch=1024,
+            n_batch=256,
         )
 
     def unload_model(self):
@@ -106,7 +107,7 @@ class MicrosoftOCR(OCREngine):
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 768
+        max_size = 256#768
 
         if w <= max_size and h <= max_size:
             return img.resize((int(w), int(h)), Image.BILINEAR)
