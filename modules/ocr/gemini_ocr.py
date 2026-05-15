@@ -15,6 +15,7 @@ from app.ui.settings.settings_page import SettingsPage
 import gc
 import torch
 import re
+import math
 
 class GeminiOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
@@ -113,17 +114,30 @@ class GeminiOCR(OCREngine):
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 256#768 256
+        max_area = 320 * 320
+        min_area = 16 * 16
 
-        if w <= max_size and h <= max_size:
-            return img.resize((int(w), int(h)), Image.BILINEAR)
+        current_area = w * h
 
-        scale = min(max_size / w, max_size / h)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
+        # вычисляем scale по площади
+        if current_area > max_area:
 
-        return img.resize((new_w, new_h), Image.BILINEAR)
+            scale = math.sqrt(max_area / current_area)
 
+        elif current_area < min_area:
+
+            scale = math.sqrt(min_area / current_area)
+
+        else:
+            scale = 1.0
+
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+
+        if (scale>=1):
+            return img.resize((new_w, new_h), Image.BILINEAR)
+        else:
+            return img.resize((new_w, new_h), Image.LANCZOS)
     # -------------------------
     # BLOCK PROCESSING
     # -------------------------
@@ -222,7 +236,7 @@ class GeminiOCR(OCREngine):
         text = self._normalize_text(text)
         text = self.remove_repeated_patterns(text)
         print(f"[OCR] {repr(text[:100])}")
-        
+
         return text
 
     def _normalize_text(self, text: str) -> str:
@@ -241,7 +255,6 @@ class GeminiOCR(OCREngine):
         text = " ".join(text.split())
 
         return text.strip()
-
 
     def remove_repeated_patterns(
         self,

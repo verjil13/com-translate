@@ -15,6 +15,7 @@ from app.ui.settings.settings_page import SettingsPage
 import gc
 import torch
 import re
+import math
 
 class MicrosoftOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
@@ -45,8 +46,8 @@ class MicrosoftOCR(OCREngine):
 
         BASE_DIR = os.getcwd()
 
-       # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
-       # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
+        # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
+        # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
 
         MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
         MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
@@ -104,19 +105,34 @@ class MicrosoftOCR(OCREngine):
     # -------------------------
     # RESIZE FUNCTION
     # -------------------------
+
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
-        max_size = 256#768
+        max_area = 320 * 320
+        min_area = 16 * 16
 
-        if w <= max_size and h <= max_size:
-            return img.resize((int(w), int(h)), Image.BILINEAR)
+        current_area = w * h
 
-        scale = min(max_size / w, max_size / h)
-        new_w = int(w * scale)
-        new_h = int(h * scale)
+        # вычисляем scale по площади
+        if current_area > max_area:
 
-        return img.resize((new_w, new_h), Image.BILINEAR)
+            scale = math.sqrt(max_area / current_area)
+
+        elif current_area < min_area:
+
+            scale = math.sqrt(min_area / current_area)
+
+        else:
+            scale = 1.0
+
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+
+        if scale >= 1:
+            return img.resize((new_w, new_h), Image.BILINEAR)
+        else:
+            return img.resize((new_w, new_h), Image.LANCZOS)
 
     # -------------------------
     # BLOCK PROCESSING
@@ -218,7 +234,7 @@ class MicrosoftOCR(OCREngine):
         text = self._normalize_text(text)
         text = self.remove_repeated_patterns(text)
         print(f"[OCR] {repr(text[:100])}")
-        
+
         return text
 
     def _normalize_text(self, text: str) -> str:
