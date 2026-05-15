@@ -61,7 +61,7 @@ class MicrosoftOCR(OCREngine):
                 clip_model_path=MMPROJ_PATH,
             ),
             n_gpu_layers=-1,
-            n_ctx=0,
+            n_ctx=1280,
             n_batch=256,
         )
 

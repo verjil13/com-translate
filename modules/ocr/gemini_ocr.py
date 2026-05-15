@@ -60,7 +60,7 @@ class GeminiOCR(OCREngine):
                 clip_model_path=MMPROJ_PATH,
             ),
             n_gpu_layers=-1,
-            n_ctx=0,
+            n_ctx=1280, #1536
             n_batch=256,
         )
 
@@ -105,12 +105,6 @@ class GeminiOCR(OCREngine):
     # -------------------------
     # RESIZE FUNCTION
     # -------------------------
-    def unload_model(self):
-        if self.llm is not None:
-            self.llm = None
-            gc.collect()
-            torch.cuda.empty_cache()
-
     def _resize_if_needed(self, img: Image.Image) -> Image.Image:
         w, h = img.size
 
