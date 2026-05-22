@@ -46,14 +46,8 @@ class MicrosoftOCR(OCREngine):
 
         BASE_DIR = os.getcwd()
 
-        # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
-        # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
-
-        MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "PaddleOCR-VL-1.5-Q8_0.gguf")
-        MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q8", "mmproj-PaddleOCR-VL-1.5-Q8_0.gguf")
-
-        # MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q4", "PaddleOCR-VL-1.5-Q4_K_M.gguf")
-        # MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5-Q4", "mmproj-PaddleOCR-VL-1.5-Q4_1.gguf")
+        MODEL_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "PaddleOCR-VL-1.5-BF16.gguf")
+        MMPROJ_PATH = os.path.join(BASE_DIR, "models/PaddleOCR-VL-1.5", "mmproj-BF16.gguf")
 
         self.llm = Llama(
             model_path=MODEL_PATH,
