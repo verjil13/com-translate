@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import os
 from typing import Any, Mapping, Optional
 import onnxruntime as ort
@@ -14,19 +15,49 @@ def torch_available() -> bool:
         return False
 
 
+def _get_available_torch_accelerators() -> list[str]:
+    """Return supported non-CPU torch accelerator names that are currently usable."""
+    try:
+        import torch
+    except ImportError:
+        return []
+
+    accelerators: list[str] = []
+
+    try:
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            accelerators.append("mps")
+    except Exception:
+        pass
+
+    try:
+        if torch.cuda.is_available():
+            accelerators.append("cuda")
+    except Exception:
+        pass
+
+    try:
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            accelerators.append("xpu")
+    except Exception:
+        pass
+
+    return accelerators
+
+
 def resolve_device(use_gpu: bool, backend: str = "onnx") -> str:
     """Return the best available device string for the specified backend.
-    
+
     Args:
         use_gpu: Whether to use GPU acceleration
         backend: Backend to use ('onnx' or 'torch')
-    
+
     Returns:
         Device string compatible with the specified backend
     """
     if not use_gpu:
         return "cpu"
-    
+
     if backend.lower() == "torch":
         return _resolve_torch_device(fallback_to_onnx=True)
     else:
@@ -35,52 +66,41 @@ def resolve_device(use_gpu: bool, backend: str = "onnx") -> str:
 
 def _resolve_torch_device(fallback_to_onnx: bool = False) -> str:
     """Resolve the best available PyTorch device."""
-    try:
-        import torch
-    except ImportError:
+    if not torch_available():
         # Torch not available, fallback to ONNX resolution if requested
         if fallback_to_onnx:
             return _resolve_onnx_device()
         return "cpu"
 
-    # Check for MPS (Apple Silicon)
-    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        return "mps"
-
-    # Check for CUDA
-    if torch.cuda.is_available():
-        return "cuda"
-
-    # Check for XPU (Intel GPU)
-    try:
-        if hasattr(torch, 'xpu') and torch.xpu.is_available():
-            return "xpu"
-    except Exception:
-        pass
+    accelerators = _get_available_torch_accelerators()
+    if accelerators:
+        return accelerators[0]
 
     # Fallback to CPU
     return "cpu"
 
 
 def _resolve_onnx_device() -> str:
-    """Resolve the best available ONNX device — TensorRT исключён."""
-    providers = ort.get_available_providers()
+    """Resolve the best available ONNX device."""
+    providers = ort.get_available_providers() 
+
     if not providers:
         return "cpu"
 
-    # Порядок приоритета без TensorRT
     if "CUDAExecutionProvider" in providers:
         return "cuda"
+
     if "CoreMLExecutionProvider" in providers:
         return "coreml"
+    
     if "ROCMExecutionProvider" in providers:
         return "rocm"
+
     if "OpenVINOExecutionProvider" in providers:
         return "openvino"
 
-    # Fallback
+    # Fallback to CPU
     return "cpu"
-
 
 def tensors_to_device(data: Any, device: str) -> Any:
     """Move tensors in nested containers to device; returns the same structure.
@@ -104,24 +124,20 @@ def tensors_to_device(data: Any, device: str) -> Any:
 
     if isinstance(data, torch.Tensor):
         return data.to(torch_device)
-
     if isinstance(data, Mapping):
         return {k: tensors_to_device(v, device) for k, v in data.items()}
-
     if isinstance(data, (list, tuple)):
         seq = [tensors_to_device(v, device) for v in data]
         return type(data)(seq) if isinstance(data, tuple) else seq
-
     return data
 
-
 def get_providers(device: Optional[str] = None) -> list[Any]:
-    """Return a providers list for ONNXRuntime — TensorRT полностью исключён.
-    
+    """Return a providers list for ONNXRuntime (optionally with provider options).
+
     Rules:
-    - If device is 'cpu' → return ['CPUExecutionProvider']
-    - Otherwise return available providers except TensorRT
-    - If nothing left → fallback to CPU
+    - If device is the string 'cpu' (case-insensitive) -> return ['CPUExecutionProvider']
+    - Otherwise return available providers with options for certain GPU providers
+    - If no providers are available, fall back to ['CPUExecutionProvider']
     """
     try:
         available = ort.get_available_providers()
@@ -133,13 +149,12 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
 
     if not available:
         return ['CPUExecutionProvider']
-
-    # Полностью убираем TensorRT
+		
     available = [p for p in available if p != "TensorrtExecutionProvider"]
-
-    # Папка для кэша моделей (только для поддерживаемых провайдеров)
+    
+    # Use user data directory for cache
     base_models_dir = os.path.join(get_user_data_dir(), "models")
-
+    
     # OpenVINO cache
     ov_cache_dir = os.path.join(base_models_dir, 'onnx-gpu-cache', 'openvino')
     os.makedirs(ov_cache_dir, exist_ok=True)
@@ -157,7 +172,6 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
         'CoreMLExecutionProvider': {
             'ModelCacheDirectory': coreml_cache_dir,
         }
-        # TensorrtExecutionProvider удалён 
     }
 
     configured: list[Any] = []
@@ -167,27 +181,20 @@ def get_providers(device: Optional[str] = None) -> list[Any]:
         else:
             configured.append(p)
 
-    # Если после исключения TensorRT ничего не осталось — принудительно CPU
-    if not configured:
-        return ['CPUExecutionProvider']
-
     return configured
 
 
 def is_gpu_available() -> bool:
-    """Check if a valid GPU provider is available (TensorRT не считается).
-    
-    Returns False if only AzureExecutionProvider and/or CPUExecutionProvider are present.
-    Returns True if any other provider (CUDA, CoreML, OpenVINO, ROCM, etc.) is found.
-    """
+    """Check if either ONNX or torch can use a supported non-CPU accelerator."""
     try:
         providers = ort.get_available_providers()
     except Exception:
-        return False
+        providers = []
 
-    # Игнорируем эти провайдеры
-    ignored_providers = {'AzureExecutionProvider', 'CPUExecutionProvider', 'TensorrtExecutionProvider'}
+    ignored_providers = {'AzureExecutionProvider', 'CPUExecutionProvider'}
+    available = set(providers)
 
-    available = set(providers) - ignored_providers
+    if not available.issubset(ignored_providers):
+        return True
 
-    return bool(available)
+    return bool(_get_available_torch_accelerators())
