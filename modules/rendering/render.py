@@ -418,7 +418,7 @@ def pyside_word_wrap(
 
     # --- split слова (ТОЛЬКО если нужно) ---
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
-        if len(word) <= 5:
+        if len(word) <= 6:
             return [word]
         
         best_i = 0
