@@ -1,21 +1,17 @@
 import os
 import numpy as np
 from PIL import Image
-import onnxruntime as ort
+
 from modules.utils.device import get_providers
-from huggingface_hub import hf_hub_download
-
+from modules.utils.download import ModelDownloader, ModelID, models_base_dir
+from modules.utils.onnx import make_session
+from modules.utils.textblock import TextBlock
+from modules.detection.utils.slicer import ImageSlicer
 from .base import DetectionEngine
-from ..utils.textblock import TextBlock
-from .utils.slicer import ImageSlicer
-
-
-current_file_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
 
 
 class RTDetrV2ONNXDetection(DetectionEngine):
-    """RT-DETR-V2 ONNX backend detection engine.
+    """RT-DETR-v2 ONNX backend detection engine.
     """
 
     def __init__(self, settings=None):
@@ -23,8 +19,7 @@ class RTDetrV2ONNXDetection(DetectionEngine):
         self.session = None
         self.device = 'cpu'
         self.confidence_threshold = 0.3
-        self.repo_name = 'ogkalu/comic-text-and-bubble-detector'
-        self.model_dir = os.path.join(project_root, 'models', 'detection')
+        self.model_dir = os.path.join(models_base_dir, 'detection')
 
         self.image_slicer = ImageSlicer(
             height_to_width_ratio_threshold=3.5,
@@ -38,15 +33,12 @@ class RTDetrV2ONNXDetection(DetectionEngine):
         device: str = 'cpu', 
         confidence_threshold: float = 0.3, 
     ) -> None:
-        
         self.device = device
         self.confidence_threshold = confidence_threshold
 
-        os.makedirs(self.model_dir, exist_ok=True)
-        hf_hub_download(repo_id=self.repo_name, filename='config.json')
-        file_path = hf_hub_download(repo_id=self.repo_name, filename='detector.onnx')
+        file_path = ModelDownloader.get_file_path(ModelID.RTDETR_V2_ONNX, 'detector.onnx')
         providers = get_providers(self.device)
-        self.session = ort.InferenceSession(file_path, providers=providers)
+        self.session = make_session(file_path, providers=providers)
 
     def detect(self, image: np.ndarray) -> list[TextBlock]:
         bubble_boxes, text_boxes = self.image_slicer.process_slices_for_detection(

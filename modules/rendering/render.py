@@ -1,5 +1,4 @@
 import numpy as np
-import pyphen
 
 from typing import Tuple, List
 
@@ -18,38 +17,18 @@ from PySide6.QtWidgets import QApplication
 from modules.utils.textblock import TextBlock
 from modules.utils.textblock import adjust_blks_size
 from modules.detection.utils.geometry import shrink_bbox
+from app.ui.canvas.text.vertical_layout import VerticalTextDocumentLayout
+from modules.utils.language_utils import get_language_code
 
 from dataclasses import dataclass
 
-
-# ============================================================
-# pyphen (русский перенос)
-# ============================================================
-
-_ru_dic = pyphen.Pyphen(lang="ru")
-
-
-def hyphenate_ru(word: str) -> Tuple[str, str]:
-    """
-    Типографский перенос русского слова.
-    Возвращает (левая_часть, правая_часть)
-    """
-    parts = _ru_dic.inserted(word).split("-")
-    if len(parts) < 2:
-        return word, ""
-    return "-".join(parts[:-1]), parts[-1]
-
-
-# ============================================================
-# DATA
-# ============================================================
 
 @dataclass
 class TextRenderingSettings:
     alignment_id: int
     font_family: str
-    min_font_size: int
-    max_font_size: int
+    min_font_size: float
+    max_font_size: float
     color: str
     upper_case: bool
     outline: bool
@@ -61,11 +40,6 @@ class TextRenderingSettings:
     line_spacing: str
     direction: Qt.LayoutDirection
 
-
-# ============================================================
-# PIL HELPERS
-# ============================================================
-
 def array_to_pil(rgb_image: np.ndarray):
     return Image.fromarray(rgb_image)
 
@@ -74,155 +48,89 @@ def pil_to_array(pil_image: Image):
     return np.array(pil_image)
 
 
+def is_vertical_language_code(lang_code: str | None) -> bool:
+    """Return True if the language code should use vertical layout.
 
-# ============================================================
-# PYSIDE WORD WRAP (исправленный)
-# ============================================================
-
-def pyside_word_wrap(
-    text: str,
-    font_input: str,
-    roi_width: int,
-    roi_height: int,  # оставлен для совместимости, но не используется
-    line_spacing=1.0,
-    outline_width=0,
-    bold=False,
-    italic=False,
-    underline=False,
-    alignment=Qt.AlignLeft,
-    direction=Qt.LeftToRight,
-    max_font_size: int = 40,
-    min_font_size: int = 10
-) -> tuple[str, int]:
+    Currently treats Japanese and simplified/traditional Chinese as
+    vertical-capable languages.
     """
-    Авто-перенос текста с подбором шрифта по ширине блока.
+    if not lang_code:
+        return False
+    code = lang_code.lower()
+    return code in {"zh-cn", "zh-tw", "ja"}
 
-    Особенности:
-    - Параметр roi_height оставлен для совместимости, игнорируется.
-    - adjusted_width = roi_width * 1.25 используется для всех измерений.
-    - Перенос по пробелам не уменьшает шрифт.
-    - Перенос части слова учитывается: если нужен перенос части слова, шрифт уменьшается.
-    - Подбор размера идет сверху вниз (от max_font_size до min_font_size).
+def is_vertical_block(blk, lang_code: str | None) -> bool:
+    """Return True if this block should be rendered vertically.
+
+    A block is considered vertical when its direction flag is "vertical"
+    and the target language code is one of the vertical-capable ones.
     """
+    return getattr(blk, "direction", "") == "vertical" and is_vertical_language_code(lang_code)
 
-    from PySide6.QtGui import QFont, QFontMetrics
+def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str, 
+                  roi_width, roi_height, align: str, spacing, init_font_size: float, min_font_size: float = 10):
+    """Break long text to multiple lines, and reduce point size
+    until all text fits within a bounding box."""
+    mutable_message = text
+    font_size = init_font_size
+    font = ImageFont.truetype(font_pth, font_size)
+    ###
+    def eval_metrics(txt, font):
+        """Quick helper function to calculate width/height of text."""
+        (left, top, right, bottom) = ImageDraw.Draw(image).multiline_textbbox(xy=tbbox_top_left, text=txt, font=font, align=align, spacing=spacing)
+        return (right-left, bottom-top)
 
-    if not text:
-        return "", min_font_size
+    while font_size > min_font_size:
+        font = font.font_variant(size=font_size)
+        width, height = eval_metrics(mutable_message, font)
+        if height > roi_height:
+            font_size -= 0.75  # Reduce pointsize
+            mutable_message = text  # Restore original text
+        elif width > roi_width:
+            columns = len(mutable_message)
+            while columns > 0:
+                columns -= 1
+                if columns == 0:
+                    break
+                mutable_message = '\n'.join(hyphen_wrap(text, columns, break_on_hyphens=False, break_long_words=False, hyphenate_broken_words=True)) 
+                wrapped_width, _ = eval_metrics(mutable_message, font)
+                if wrapped_width <= roi_width:
+                    break
+            if columns < 1:
+                font_size -= 0.75  # Reduce pointsize
+                mutable_message = text  # Restore original text
+        else:
+            break
 
-    text = str(text).strip()
-    if not text:
-        return "", min_font_size
+    if font_size <= min_font_size:
+        font_size = min_font_size
+        mutable_message = text
+        font = font.font_variant(size=font_size)
 
-    # --- немного увеличиваем ширину для удобства ---
-    adjusted_width = roi_width * 1.25
+        # Wrap text to fit within as much as possible
+        # Minimize cost function: (width - roi_width)^2 + (height - roi_height)^2
+        # This is a brute force approach, but it works well enough
+        min_cost = 1e9
+        min_text = text
+        for columns in range(1, len(text)):
+            wrapped_text = '\n'.join(hyphen_wrap(text, columns, break_on_hyphens=False, break_long_words=False, hyphenate_broken_words=True))
+            wrapped_width, wrapped_height = eval_metrics(wrapped_text, font)
+            cost = (wrapped_width - roi_width)**2 + (wrapped_height - roi_height)**2
+            if cost < min_cost:
+                min_cost = cost
+                min_text = wrapped_text
 
-    # --- подготовка шрифта ---
-    def prepare_font(size: int) -> QFont:
-        f = QFont(font_input.strip() or "Arial", size)
-        f.setBold(bold)
-        f.setItalic(italic)
-        f.setUnderline(underline)
-        return f
-
-    # --- функция wrap текста ---
-    def wrap_text(src: str, font: QFont) -> tuple[str, bool]:
-        """
-        Wrap текста по ширине блока (adjusted_width).
-        Возвращает:
-            wrapped_text: str
-            has_hyphen: bool — True, если пришлось переносить часть слова
-        """
-        metrics = QFontMetrics(font)
-        lines: list[str] = []
-        current_line = ""
-        has_hyphen = False
-
-        for word in src.split():
-            space = " " if current_line else ""
-            test_line = current_line + space + word
-
-            # Слово помещается в текущую строку — просто добавляем
-            if metrics.horizontalAdvance(test_line) <= adjusted_width:
-                current_line = test_line
-                continue
-
-            # Перенос на новую строку по пробелу
-            if current_line:
-                lines.append(current_line)
-                current_line = ""
-
-            # Слово помещается само на новой строке
-            if metrics.horizontalAdvance(word) <= adjusted_width:
-                current_line = word
-                continue
-
-            # --- слово слишком длинное — перенос по части слова ---
-            has_hyphen = True
-            remaining = word
-            parts: list[str] = []
-            max_char_width = max([metrics.horizontalAdvance(c) for c in remaining])
-
-            while remaining:
-                for i in range(len(remaining), 0, -1):
-                    candidate = remaining[:i]
-
-                    # Проверка на висячую букву
-                    if i < len(remaining):
-                        remaining_width = metrics.horizontalAdvance(remaining[i:])
-                        if remaining_width < 2 * max_char_width:
-                            continue
-
-                    test_candidate = candidate + ("-" if i < len(remaining) else "")
-                    if metrics.horizontalAdvance(test_candidate) <= adjusted_width:
-                        break
-                else:
-                    i = 1
-                    test_candidate = remaining[:1] + ("-" if len(remaining) > 1 else "")
-
-                parts.append(test_candidate)
-                remaining = remaining[i:]
-
-            lines.extend(parts)
-
-        if current_line:
-            lines.append(current_line)
-
-        return "\n".join(lines), has_hyphen
-
-    # --- подбор размера сверху вниз ---
-    for size in range(max_font_size, min_font_size - 1, -1):
-        font_for_measure = prepare_font(size)
-        wrapped_text, has_hyphen = wrap_text(text, font_for_measure)
-
-        # Если текст помещается без переноса части слова — используем этот размер
-        if not has_hyphen:
-            return wrapped_text, size
-
-    # --- если ни один больше не подошел — минимальный размер ---
-    font_for_measure = prepare_font(min_font_size)
-    wrapped_text, _ = wrap_text(text, font_for_measure)
-    return wrapped_text, min_font_size
-
-
-
-# ============================================================
-# GET BEST RENDER AREA
-# ============================================================
+        mutable_message = min_text
+    
+    return mutable_message, font_size
 
 def get_best_render_area(
     blk_list: List[TextBlock],
     img,
-    inpainted_img
+    inpainted_img=None
 ):
-    """
-    Автоматический режим:
-    - определяет область для рендера
-    - ЦЕНТРИРУЕТ текст по вертикали и горизонтали внутри пузыря
-    """
-
-    if inpainted_img is None or inpainted_img.size == 0:
-        return blk_list
+    #if inpainted_img is None or inpainted_img.size == 0:
+    #    return blk_list
 
     for blk in blk_list:
         if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:
@@ -235,8 +143,8 @@ def get_best_render_area(
         has_spaces = " " in translation.strip()
         is_vertical_text = not has_spaces
 
-        # Базовая область
-        text_draw_bounds = shrink_bbox(
+        # Базовая область       
+        text_draw_bounds = shrink_bbox(            
             blk.bubble_xyxy,
             0.3 if is_vertical_text else 0.05
         )
@@ -245,25 +153,14 @@ def get_best_render_area(
         box_w = x2 - x1
         box_h = y2 - y1
 
-        # --------------------------------------------------
-        # ❌ СТАРЫЙ РУЧНОЙ СДВИГ (ОСТАВЛЕН, КАК ПРОСИЛ)
-        # --------------------------------------------------
-        # vertical_offset = int(box_h * 0.08)
-        # blk.xyxy[:] = [x1, y1 + vertical_offset, x2, y2]
-        # continue
-
-        # --------------------------------------------------
-        # ✅ НОВОЕ: АВТОЦЕНТРИРОВАНИЕ
-        # --------------------------------------------------
-
         # Берём текущий bbox (его размер уже подогнан ранее)
         cur_x1, cur_y1, cur_x2, cur_y2 = blk.xyxy
         cur_w = cur_x2 - cur_x1
         cur_h = cur_y2 - cur_y1
 
         # Центр пузыря
-        center_x = x1 + ((0.9 * box_w) // 2)
-        center_y = y1 + ((1.2 * box_h) // 2)
+        center_x = x1 + ((1.0 * box_w) // 2)
+        center_y = y1 + ((0.9 * box_h) // 2)
 
         # Новый bbox — по центру
         new_x1 = int(center_x - cur_w // 2)
@@ -273,37 +170,422 @@ def get_best_render_area(
 
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
 
-    adjust_blks_size(blk_list, img, -5, -5)
+
+    if blk_list and blk_list[0].source_lang not in ['ko', 'zh', 'ja']:
+        adjust_blks_size(blk_list, img, -5, -5)
+
+
     return blk_list
+'''
+def pyside_word_wrap(
+    blk_list: List[TextBlock],
+    text: str,
+    font_input: str,
+    roi_width: int,
+    roi_height: int,
+    line_spacing=1.0,
+    outline_width=0.0,
+    bold=bool,
+    italic=bool,
+    underline=bool,
+    alignment= Qt.AlignLeft,
+    direction= Qt.LeftToRight, 
+    max_font_size: int = 40,
+    min_font_size: int = 10,
+    vertical: bool = False,
+    width_coef: float = 1.2, # коэффициент по ширине 1.25
+    height_coef: float = 1.1,  # коэффициент по высоте 1.05
+) -> tuple[str, int]:
+    """
+    Авто-перенос текста с подбором шрифта по ширине И ВЫСОТЕ блока.
 
+    Новое:
+    - Учитывается roi_height
+    - adjusted_height = roi_height * height_coef
+    - Если текст не помещается по высоте — шрифт уменьшается
+    """
 
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    if not text:
+        return "", min_font_size
+
+    text = str(text).strip()
+    if not text:
+        return "", min_font_size
+
+    # --- коэффициенты удобства ---
+    if blk_list and blk_list[0].source_lang in ['ko', 'zh', 'ja']:
+        adjusted_width = roi_width * width_coef
+        adjusted_height = roi_height * height_coef
+    else:
+        adjusted_width = roi_width
+        adjusted_height = roi_height
+
+    # --- подготовка шрифта ---
+    def prepare_font(font_size):
+        effective_family = font_input.strip() if isinstance(font_input, str) and font_input.strip() else QApplication.font().family()
+        font = QFont(effective_family, font_size)
+        font.setBold(bold)
+        font.setItalic(italic)
+        font.setUnderline(underline)
+
+        return font
+
+    # --- расчёт реальной высоты текста ---
+    def get_text_height(metrics: QFontMetrics, wrapped: str) -> int:
+        lines = wrapped.split("\n")
+        if not lines:
+            return 0
+        # учитываем межстрочный интервал
+        line_h = metrics.height()
+        return int(line_h * len(lines) * line_spacing)
+
+    # --- функция wrap текста ---
+    def wrap_text(src: str, font: QFont) -> tuple[str, bool]:
+        metrics = QFontMetrics(font)
+        lines: list[str] = []
+        current_line = ""
+        has_hyphen = False
+    
+        # --- анти-уродливые переносы (В ПИКСЕЛЯХ, не в символах) ---
+        MIN_LEFT_WIDTH_COEF = 1.5   # минимальная ширина левой части (в ширинах символа)
+        MIN_RIGHT_WIDTH_COEF = 2.0  # минимальная ширина хвоста (в ширинах символа)
+    
+        for word in src.split():
+            space = " " if current_line else ""
+            test_line = current_line + space + word
+    
+            # Слово помещается в текущую строку
+            if metrics.horizontalAdvance(test_line) <= adjusted_width:
+                current_line = test_line
+                continue
+    
+            # Перенос по пробелу (идеальный случай)
+            if current_line:
+                lines.append(current_line)
+                current_line = ""
+    
+            # Слово целиком помещается на новой строке
+            if metrics.horizontalAdvance(word) <= adjusted_width:
+                current_line = word
+                continue
+    
+            # Слово слишком длинное — умный перенос по частям
+            has_hyphen = True
+            remaining = word
+    
+            # базовая метрика — ширина "среднего" символа
+            avg_char_width = max(1, metrics.horizontalAdvance("W"))#n
+            min_left_width = avg_char_width * MIN_LEFT_WIDTH_COEF
+            min_right_width = avg_char_width * MIN_RIGHT_WIDTH_COEF
+    
+            while remaining:
+                best_i = 0
+                best_candidate = ""
+    
+                # Ищем САМЫЙ длинный кусок, который:
+                # - влезает по ширине
+                # - не создает микроскопический левый кусок
+                # - не создает уродливый хвост
+                for i in range(len(remaining), 0, -1):
+                    left = remaining[:i]
+                    is_split = i < len(remaining)
+                    candidate = left + ("-" if is_split else "")
+    
+                    # Проверка ширины
+                    if metrics.horizontalAdvance(candidate) > adjusted_width:
+                        continue
+    
+                    if is_split:
+                        left_width = metrics.horizontalAdvance(left)
+                        right = remaining[i:]
+                        right_width = metrics.horizontalAdvance(right)
+    
+                        # ❌ запрет: "с-"
+                        if left_width < min_left_width:
+                            continue
+    
+                        # ❌ запрет: "…\nr"
+                        if right_width < min_right_width:
+                            continue
+    
+                    best_i = i
+                    best_candidate = candidate
+                    break
+    
+                # fallback: если нормальный перенос невозможен (очень узкий бокс)
+                if best_i == 0:
+                    for i in range(len(remaining), 0, -1):
+                        left = remaining[:i]
+                        candidate = left + ("-" if i < len(remaining) else "")
+                        if metrics.horizontalAdvance(candidate) <= adjusted_width:
+                            best_i = i
+                            best_candidate = candidate
+                            break
+    
+                    # крайний случай — влезает только 1 символ
+                    if best_i == 0:
+                        best_i = 1
+                        best_candidate = remaining[:1] + ("-" if len(remaining) > 1 else "")
+    
+                lines.append(best_candidate)
+                remaining = remaining[best_i:]
+    
+        if current_line:
+            lines.append(current_line)
+    
+        return "\n".join(lines), has_hyphen
+
+    # --- подбор размера: теперь по ширине И высоте ---
+    for size in range(max_font_size, min_font_size - 1, -1):
+        font_for_measure = prepare_font(size)
+        metrics = QFontMetrics(font_for_measure)
+
+        wrapped_text, has_hyphen = wrap_text(text, font_for_measure)
+
+        # вычисляем итоговую высоту текста
+        text_height = get_text_height(metrics, wrapped_text)
+
+        # ❗ НОВОЕ: проверка переполнения по высоте
+        if text_height > adjusted_height:
+            continue  # уменьшаем шрифт
+
+        # если влез по высоте и не было переноса части слова — идеально
+        if not has_hyphen:
+            return wrapped_text, size
+
+        # если был перенос части слова, но всё влезает по высоте —
+        # всё равно допускаем (лучше чем переполнение)
+        if text_height <= adjusted_height:
+            return wrapped_text, size
+
+    # --- fallback: минимальный размер ---
+    font_for_measure = prepare_font(min_font_size)
+    wrapped_text, _ = wrap_text(text, font_for_measure)
+    return wrapped_text, min_font_size
+'''
+
+def pyside_word_wrap(
+    blk_list: List["TextBlock"],
+    text: str,
+    font_input: str,
+    roi_width: int,
+    roi_height: int,
+    line_spacing=1.0,
+    outline_width=0.0,
+    bold=False,
+    italic=False,
+    underline=False,
+    alignment=Qt.AlignLeft,
+    direction=Qt.LeftToRight,
+    max_font_size: float = 40,
+    min_font_size: float = 10,
+    vertical: bool = False,
+    width_coef: float = 1.3,
+    height_coef: float = 1.2,
+) -> tuple[str, int]:
+
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    if not text:
+        return "", min_font_size
+
+    text = str(text).strip()
+    if not text:
+        return "", min_font_size
+
+    # --- адаптация под язык ---
+    if blk_list and getattr(blk_list[0], "source_lang", None) in ['ko', 'zh', 'ja']:
+        adjusted_width = roi_width * width_coef
+        adjusted_height = roi_height * height_coef
+    else:
+        adjusted_width = roi_width
+        adjusted_height = roi_height
+
+    # --- font ---
+    def prepare_font(size: int) -> QFont:
+        family = font_input.strip() if isinstance(font_input, str) and font_input.strip() else QApplication.font().family()
+        font = QFont(family, size)
+        font.setBold(bold)
+        font.setItalic(italic)
+        font.setUnderline(underline)
+        return font
+
+    def get_height(metrics: QFontMetrics, wrapped: str) -> int:
+        lines = wrapped.split("\n")
+        return int(metrics.height() * len(lines) * line_spacing)
+
+    # --- split слова (ТОЛЬКО если нужно) ---
+    def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
+        if len(word) <= 6:
+            return [word]
+        
+        best_i = 0
+        best_diff = float("inf")
+        
+
+        for i in range(1, len(word)):
+            left = word[:i]
+            right = word[i:]
+
+            diff = abs(metrics.horizontalAdvance(left) - metrics.horizontalAdvance(right))
+            if diff < best_diff:
+                best_diff = diff
+                best_i = i
+
+        if best_i == 0:
+            for i in range(len(word), 0, -1):
+                if metrics.horizontalAdvance(word[:i]) <= adjusted_width:
+                    best_i = i
+                    break
+
+        return [word[:best_i] + "-", word[best_i:]]
+
+    # --- wrap ---
+    def wrap_text(src: str, font: QFont, allow_split: bool) -> str:
+        metrics = QFontMetrics(font)
+
+        words_raw = src.split()
+        words = []
+
+        for w in words_raw:
+            if allow_split and metrics.horizontalAdvance(w) > adjusted_width:
+                words.extend(split_single_word(w, metrics))
+            else:
+                words.append(w)
+
+        if not words:
+            return ""
+
+        word_widths = [metrics.horizontalAdvance(w) for w in words]
+        max_word_width = max(word_widths)        
+
+        target_width = max(max_word_width, adjusted_width)
+
+        lines = []
+        current = ""
+
+        flag = 0
+
+        for word in words:
+            if not current:
+                current = word
+                continue
+            
+            test = current + " " + word
+
+            if flag <3:
+                condition = target_width
+            else:
+                condition = roi_width
+
+            if metrics.horizontalAdvance(test) <= condition:#target_width:
+                current = test                
+                flag += 1 
+            else:
+                lines.append(current)
+                current = word
+                flag = 0
+
+        if current:
+            lines.append(current)
+
+        return "\n".join(lines)
+
+    # =========================
+    # 1. Подбор шрифта по ширине (БЕЗ split)
+    # =========================
+    best_size = min_font_size
+    allow_split = False
+
+    step = 0.1
+    size = max_font_size
+
+    # for size in range(max_font_size, min_font_size - 1, -1):
+    while size>=min_font_size:
+        font = prepare_font(size)
+        metrics = QFontMetrics(font)
+
+        words = text.split()
+        max_word_width = max(metrics.horizontalAdvance(w) for w in words)
+
+        if max_word_width <= adjusted_width:
+            best_size = size
+            wrapped = text
+            break
+        size-=step    
+
+    else:
+        # даже минимальный не влез → разрешаем split
+        best_size = min_font_size
+        allow_split = True
+        font = prepare_font(best_size)
+        wrapped = wrap_text(text, font, allow_split)
+        allow_split = False
+        # for size in range(min_font_size, max_font_size):
+        while best_size<=max_font_size:            
+            font = prepare_font(best_size)
+            metrics = QFontMetrics(font)
+            words = wrapped.split()
+            max_word_width = max(metrics.horizontalAdvance(w) for w in words)
+            if max_word_width >= adjusted_width:
+                break
+            best_size+=step    
+
+    # =========================
+    # 2. Теперь учитываем высоту
+    # =========================
+    # for size in range(best_size, min_font_size^ - 1, -1):
+    while best_size > min_font_size:
+        font = prepare_font(best_size)
+        metrics = QFontMetrics(font)
+
+        wrapped = wrap_text(wrapped, font, allow_split)
+        height = get_height(metrics, wrapped)
+
+        if height <= 1.1*adjusted_height:
+            best_size = round(max(min_font_size, min(best_size, max_font_size)),1)
+            return wrapped, best_size
+        best_size -= step
+
+    # fallback
+    min_font_size = round(min_font_size,1)
+    font = prepare_font(min_font_size)    
+    return wrap_text(wrapped, font, allow_split), min_font_size
 
 # ============================================================
 # MANUAL MODE (БЕЗ ИЗМЕНЕНИЙ)
 # ============================================================
 
 def manual_wrap(
-    main_page,
-    blk_list: List[TextBlock],
-    font_family: str,
-    line_spacing,
-    outline_width,
-    bold,
-    italic,
-    underline,
-    alignment,
-    direction,
-    init_font_size: int = 40,
-    min_font_size: int = 10
+    main_page, 
+    blk_list: List[TextBlock], 
+    image_path: str,
+    font_family: str, 
+    line_spacing: float, 
+    outline_width: float, 
+    bold: bool, 
+    italic: bool, 
+    underline: bool, 
+    alignment,#: Qt.AlignmentFlag, 
+    direction,#: Qt.LayoutDirection, 
+    init_font_size: float = 40, 
+    min_font_size: float = 10
 ):
+    target_lang = main_page.lang_mapping.get(main_page.t_combo.currentText(), None)
+    trg_lng_cd = get_language_code(target_lang)                                                                                   
     for blk in blk_list:
         x1, y1, width, height = blk.xywh
         translation = blk.translation
         if not translation:
             continue
+            
+        vertical = is_vertical_block(blk, trg_lng_cd)    
 
         # 1️⃣ Подбираем текст и размер шрифта
         wrapped_text, font_size = pyside_word_wrap(
+            blk_list,
             translation,
             font_family,
             width,
@@ -316,7 +598,8 @@ def manual_wrap(
             alignment,
             direction,
             init_font_size,
-            min_font_size
+            min_font_size,
+            vertical
         )
 
         # 2️⃣ Центрируем bbox блока под размер текста
@@ -329,7 +612,6 @@ def manual_wrap(
         text_lines = wrapped_text.split("\n")
         text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
         text_h = metrics.height() * len(text_lines)  # высота всего текста
-
         # центрирование внутри исходного блока
         new_x1 = x1 + (width - text_w) // 2
         new_y1 = y1 + (height - text_h) // 2
@@ -338,5 +620,4 @@ def manual_wrap(
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]
 
         # 3️⃣ Рендерим текст уже в центрированном блоке
-        main_page.blk_rendered.emit(wrapped_text, font_size, blk)
-
+        main_page.blk_rendered.emit(wrapped_text, font_size, blk, image_path)

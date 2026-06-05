@@ -1,35 +1,60 @@
+from __future__ import annotations
+
 import os
 import json
-import shutil
 import requests
 import logging
 import traceback
 import imkit as imk
 import time
 import re
+import regex as ure
+import unicodedata
+
+from typing import TYPE_CHECKING
 from datetime import datetime
 from typing import List
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor
+
+from PySide6.QtGui import (
+    QFont,
+    QTextDocument,
+    QTextCursor,
+    QTextBlockFormat,
+    QTextOption,
+    QFontMetrics
+)
 
 from modules.detection.processor import TextBlockDetector
 from modules.translation.processor import Translator
 from modules.utils.textblock import sort_blk_list
-from modules.utils.pipeline_utils import inpaint_map, get_config, generate_mask, \
-    get_language_code, is_directory_empty, get_smart_text_color
+from modules.utils.pipeline_config import get_config
+from modules.utils.image_utils import generate_mask, get_smart_text_color
+from modules.utils.language_utils import get_language_code, is_no_space_lang
 from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations
-from modules.utils.archives import make
-from modules.rendering.render import get_best_render_area, pyside_word_wrap
+from modules.rendering.render import get_best_render_area, pyside_word_wrap, is_vertical_block
 from modules.utils.device import resolve_device
+from modules.utils.exceptions import InsufficientCreditsException
+from app.path_materialization import ensure_path_materialized
 from app.ui.canvas.text_item import OutlineInfo, OutlineType
 from app.ui.canvas.text.text_item_properties import TextItemProperties
-from app.ui.canvas.save_renderer import ImageSaveRenderer
+from app.ui.messages import Messages
+from .cache_manager import CacheManager
+from .block_detection import BlockDetectionHandler
+from .inpainting import InpaintingHandler
+from .ocr_handler import OCRHandler
 
+if TYPE_CHECKING:
+    from controller import ComicTranslate
 
 logger = logging.getLogger(__name__)
 
-##TRASH_RE = re.compile(r'^[\s.!?…！？。、．]+$')
-
-
+LETTER_RE = ure.compile(r'\p{L}')
+TRASH_RE = ure.compile(
+    r'^[\p{N}\p{P}\p{S}\p{Z}'       # стандартные числа, символы, пунктуация, пробелы
+    r'\uFF01-\uFF5E]*$'              # fullwidth ! " # $ % & ... ~
+)
 
 
 class BatchProcessor:
@@ -37,11 +62,11 @@ class BatchProcessor:
     
     def __init__(
             self, 
-            main_page, 
-            cache_manager, 
-            block_detection_handler, 
-            inpainting_handler, 
-            ocr_handler
+            main_page: ComicTranslate, 
+            cache_manager: CacheManager, 
+            block_detection_handler: BlockDetectionHandler, 
+            inpainting_handler: InpaintingHandler, 
+            ocr_handler: OCRHandler 
         ):
         
         self.main_page = main_page
@@ -52,10 +77,7 @@ class BatchProcessor:
         self.ocr_handler = ocr_handler
 
     def skip_save(self, directory, timestamp, base_name, extension, archive_bname, image):
-        path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-        if not os.path.exists(path):
-            os.makedirs(path, exist_ok=True)
-        imk.write_image(os.path.join(path, f"{base_name}_translated{extension}"), image)
+        logger.info("Skipping fallback translated image save for '%s'.", base_name)
 
     def emit_progress(self, index, total, step, steps, change_name):
         """Wrapper around main_page.progress_update.emit that logs a human-readable stage."""
@@ -75,50 +97,68 @@ class BatchProcessor:
         self.main_page.progress_update.emit(index, total, step, steps, change_name)
 
     def log_skipped_image(self, directory, timestamp, image_path, reason="", full_traceback=""):
-        skipped_file = os.path.join(directory, f"comic_translate_{timestamp}", "skipped_images.txt")
-        with open(skipped_file, 'a', encoding='UTF-8') as file:
-            file.write(image_path + "\n")
-            file.write(reason + "\n")
-            if full_traceback:
-                file.write("Full Traceback:\n")
-                file.write(full_traceback + "\n")
-            file.write("\n")
+        # Deprecated: skip details are captured by batch reporting/UI signals.
+        return
+
 
     # --------------------------------------------------
     # Функция для авто-удаления «мусорных» блоков
     # --------------------------------------------------
-    def auto_delete_trash_blocks(self, blk_list: List) -> List:
+    def auto_delete_trash_blocks(self, blk_list: List = None) -> List:
         """
-        Удаляет текстовые блоки, которые не содержат осмысленного текста:
-        - Только символы вроде '.', '!', '?', '…', '！？。、'
-        - Многоточия с пробелами, повторяющиеся знаки
+        Удаляет текстовые блоки без осмысленного текста.
+        Если blk_list не передан, используется self.blk_list.
         """
-        # Регулярка для мусора: '.', '!', '?', '…', '！？。、', повторяющиеся, через пробелы
-        #TRASH_RE = re.compile(r'^(?:[\s.!?…！？。、]+|(?:[.!?…！？。、]+(?:\s+[.!?…！？。、]+)*))$') ♪
-        TRASH_RE = re.compile(r'^[\s.!♪★☆☉♀♂♠♡♣♥♦♭♯✩?…！？。、,．]+$')
+        if blk_list is None:
+            blk_list = self.blk_list
+    
         new_blk_list = []
         removed_count = 0
+    
         for blk in blk_list:
-            if blk.text and not TRASH_RE.fullmatch(blk.text.strip()):
-                new_blk_list.append(blk)
-            else:
+            text = (blk.text or "").strip()
+            if not text:
                 removed_count += 1
                 logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+                continue
+    
+            text = unicodedata.normalize("NFC", text)
+    
+            # есть хотя бы одна буква → оставляем
+            if LETTER_RE.search(text):
+                new_blk_list.append(blk)
+            # весь текст — мусор (числа, символы, пунктуация) → удаляем
+            elif TRASH_RE.fullmatch(text):
+                removed_count += 1
+                logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
+            else:
+                # неожиданные символы → оставляем
+                new_blk_list.append(blk)
+    
         if removed_count:
             logger.info(f"🧹 Trash blocks removed: {removed_count}")
-            
-        print(321)    
+        print("321")
         return new_blk_list
 
-    # --------------------------------------------------
-    # Основной batch процесс
-    # --------------------------------------------------
+    def _is_cancelled(self) -> bool:
+        worker = getattr(self.main_page, "current_worker", None)
+        return bool(worker and worker.is_cancelled)
+
+
     def batch_process(self, selected_paths: List[str] = None):
         timestamp = datetime.now().strftime("%b-%d-%Y_%I-%M-%S%p")
         image_list = selected_paths if selected_paths is not None else self.main_page.image_files
         total_images = len(image_list)
+        try:
+            if self.main_page.file_handler.should_pre_materialize(image_list):
+                count = self.main_page.file_handler.pre_materialize(image_list)
+                logger.info("Batch pre-materialized %d paths before full-run processing.", count)
+        except Exception:
+            logger.debug("Batch pre-materialization failed; continuing lazily.", exc_info=True)
 
         for index, image_path in enumerate(image_list):
+            if self._is_cancelled():
+                return
 
             file_on_display = self.main_page.image_files[self.main_page.curr_img_idx]
 
@@ -146,6 +186,7 @@ class BatchProcessor:
                         directory = os.path.dirname(archive_path)
                         archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
 
+            ensure_path_materialized(image_path)
             image = imk.read_image(image_path)
 
             # skip UI-skipped images
@@ -157,9 +198,8 @@ class BatchProcessor:
 
             # Text Block Detection
             self.emit_progress(index, total_images, 1, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             # Use the shared block detector from the handler
             if self.block_detection.block_detector_cache is None:
@@ -168,9 +208,8 @@ class BatchProcessor:
             blk_list = self.block_detection.block_detector_cache.detect(image)
 
             self.emit_progress(index, total_images, 2, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             if blk_list:
                 # OCR и сортировка блоков
@@ -185,18 +224,30 @@ class BatchProcessor:
                     source_lang_english = self.main_page.lang_mapping.get(source_lang, source_lang)
                     rtl = True if source_lang_english == 'Japanese' else False
                     blk_list = sort_blk_list(blk_list, rtl)
-
                     # >>> ВАЖНО: удаляем мусорные блоки после OCR
                     blk_list = self.auto_delete_trash_blocks(blk_list)
                     self.main_page.blk_list = blk_list
-
+                except InsufficientCreditsException:
+                    raise
+                    
                 except Exception as e:
-                    if isinstance(e, requests.exceptions.HTTPError):
-                        try:
-                            err_json = e.response.json()
-                            err_msg = err_json.get("error_description", str(e))
-                        except Exception:
-                            err_msg = str(e)
+                    # if it's a connection/network error, give a short message
+                    if isinstance(e, requests.exceptions.ConnectionError):
+                        err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
+                    # if it's an HTTPError, try to pull the "error_description" field
+                    elif isinstance(e, requests.exceptions.HTTPError):
+                        status_code = e.response.status_code if e.response is not None else 500
+                        if status_code >= 500:
+                            err_msg = Messages.get_server_error_text(status_code, context='ocr')
+                        else:
+                            try:
+                                err_json = e.response.json()
+                                if "detail" in err_json and isinstance(err_json["detail"], dict):
+                                    err_msg = err_json["detail"].get("error_description", str(e))
+                                else:
+                                    err_msg = err_json.get("error_description", str(e))
+                            except Exception:
+                                err_msg = str(e)
                     else:
                         err_msg = str(e)
 
@@ -214,28 +265,14 @@ class BatchProcessor:
                 continue
 
             self.emit_progress(index, total_images, 3, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             # Clean Image of text
             export_settings = settings_page.get_export_settings()
 
             # Use the shared inpainter from the handler
-            if self.inpainting.inpainter_cache is None or self.inpainting.cached_inpainter_key != settings_page.get_tool_selection('inpainter'):
-                backend = 'onnx'
-                device = resolve_device(
-                    settings_page.is_gpu_enabled(),
-                    backend=backend
-                )
-                inpainter_key = settings_page.get_tool_selection('inpainter')
-                InpainterClass = inpaint_map[inpainter_key]
-                logger.info("pre-inpaint: initializing inpainter '%s' on device %s", inpainter_key, device)
-                t0 = time.time()
-                self.inpainting.inpainter_cache = InpainterClass(device, backend=backend)
-                self.inpainting.cached_inpainter_key = inpainter_key
-                t1 = time.time()
-                logger.info("pre-inpaint: inpainter initialized in %.2fs", t1 - t0)
+            self.inpainting._ensure_inpainter()
 
             config = get_config(settings_page)
             logger.info("pre-inpaint: generating mask (blk_list=%d blocks)", len(blk_list))
@@ -245,9 +282,8 @@ class BatchProcessor:
             logger.info("pre-inpaint: mask generated in %.2fs (mask shape=%s)", t1 - t0, getattr(mask, 'shape', None))
 
             self.emit_progress(index, total_images, 4, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             inpaint_input_img = self.inpainting.inpainter_cache(image, mask, config)
             inpaint_input_img = imk.convert_scale_abs(inpaint_input_img)
@@ -265,9 +301,8 @@ class BatchProcessor:
                 imk.write_image(os.path.join(path, f"{base_name}_cleaned{extension}"), inpaint_input_img)
 
             self.emit_progress(index, total_images, 5, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             # Get Translations/ Export if selected
             extra_context = settings_page.get_llm_settings()['extra_context']
@@ -283,14 +318,26 @@ class BatchProcessor:
                 translator.translate(blk_list, image, extra_context)
                 # Cache the translation results for potential future use
                 self.cache_manager._cache_translation_results(translation_cache_key, blk_list)
+            except InsufficientCreditsException:
+                raise
             except Exception as e:
+                # if it's a connection/network error, give a short message
+                if isinstance(e, requests.exceptions.ConnectionError):
+                    err_msg = QCoreApplication.translate("Messages", "Unable to connect to the server.\nPlease check your internet connection.")
                 # if it's an HTTPError, try to pull the "error_description" field
-                if isinstance(e, requests.exceptions.HTTPError):
-                    try:
-                        err_json = e.response.json()
-                        err_msg = err_json.get("error_description", str(e))
-                    except Exception:
-                        err_msg = str(e)
+                elif isinstance(e, requests.exceptions.HTTPError):
+                    status_code = e.response.status_code if e.response is not None else 500
+                    if status_code >= 500:
+                        err_msg = Messages.get_server_error_text(status_code, context='translation')
+                    else:
+                        try:
+                            err_json = e.response.json()
+                            if "detail" in err_json and isinstance(err_json["detail"], dict):
+                                err_msg = err_json["detail"].get("error_description", str(e))
+                            else:
+                                err_msg = err_json.get("error_description", str(e))
+                        except Exception:
+                            err_msg = str(e)
                 else:
                     err_msg = str(e)
 
@@ -301,6 +348,9 @@ class BatchProcessor:
                 self.main_page.image_skipped.emit(image_path, "Translator", err_msg)
                 self.log_skipped_image(directory, timestamp, image_path, reason, full_traceback)
                 continue
+
+            if self._is_cancelled():
+                return
 
             entire_raw_text = get_raw_text(blk_list)
             entire_translated_text = get_raw_translation(blk_list)
@@ -330,20 +380,27 @@ class BatchProcessor:
                 path = os.path.join(directory, f"comic_translate_{timestamp}", "raw_texts", archive_bname)
                 if not os.path.exists(path):
                     os.makedirs(path, exist_ok=True)
-                file = open(os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_raw.txt"), 'w', encoding='UTF-8')
-                file.write(entire_raw_text)
+                with open(
+                    os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_raw.json"),
+                    'w',
+                    encoding='UTF-8',
+                ) as file:
+                    file.write(entire_raw_text)
 
             if export_settings['export_translated_text']:
                 path = os.path.join(directory, f"comic_translate_{timestamp}", "translated_texts", archive_bname)
                 if not os.path.exists(path):
                     os.makedirs(path, exist_ok=True)
-                file = open(os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_translated.txt"), 'w', encoding='UTF-8')
-                file.write(entire_translated_text)
+                with open(
+                    os.path.join(path, os.path.splitext(os.path.basename(image_path))[0] + "_translated.json"),
+                    'w',
+                    encoding='UTF-8',
+                ) as file:
+                    file.write(entire_translated_text)
 
             self.emit_progress(index, total_images, 7, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             # Text Rendering
             render_settings = self.main_page.render_settings()
@@ -353,13 +410,13 @@ class BatchProcessor:
             get_best_render_area(blk_list, image, inpaint_input_img)
 
             font = render_settings.font_family
-            font_color = QColor(render_settings.color)
+            setting_font_color = QColor(render_settings.color)
 
             max_font_size = render_settings.max_font_size
             min_font_size = render_settings.min_font_size
             line_spacing = float(render_settings.line_spacing) 
             outline_width = float(render_settings.outline_width)
-            outline_color = QColor(render_settings.outline_color) 
+            outline_color = QColor(render_settings.outline_color) if outline else None
             bold = render_settings.bold
             italic = render_settings.italic
             underline = render_settings.underline
@@ -370,25 +427,72 @@ class BatchProcessor:
             text_items_state = []
             for blk in blk_list:
                 x1, y1, width, height = blk.xywh
-
                 translation = blk.translation
                 if not translation or len(translation) == 0: #1
                     continue
-
-                translation, font_size = pyside_word_wrap(translation, font, width, height,
-                                                        line_spacing, outline_width, bold, italic, underline,
-                                                        alignment, direction, max_font_size, min_font_size)
                 
-                # Display text if on current page  
-                if image_path == file_on_display:
-                    self.main_page.blk_rendered.emit(translation, font_size, blk)
+                # Determine if this block should use vertical rendering
+                vertical = is_vertical_block(blk, trg_lng_cd)
 
+                translation, font_size = pyside_word_wrap(
+                    blk_list,
+                    translation, 
+                    font, 
+                    width, 
+                    height,
+                    line_spacing, 
+                    outline_width, 
+                    bold, 
+                    italic, 
+                    underline,
+                    alignment, 
+                    direction, 
+                    max_font_size, 
+                    min_font_size,
+                    vertical
+                )
+                
+                
+                ##################
+                # Центрируем bbox блока под размер текста
+                # вычисляем ширину и высоту текста в пикселях
+                font1 = QFont(font, font_size)
+                font1.setBold(bold)
+                font1.setItalic(italic)
+                font1.setUnderline(underline)
+                metrics = QFontMetrics(font1)
+                text_lines = translation.split("\n")
+                text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
+                text_h = metrics.height() * len(text_lines)  # высота всего текста
+                # центрирование внутри исходного блока
+                new_x1 = x1 + (width - text_w) // 2
+                new_y1 = y1 + (height - text_h) // 2
+                
+                x1 = new_x1
+                y1 = new_y1
+                width = text_w            
+                height = text_h
+                blk.xyxy[:] = (
+                    new_x1,
+                    new_y1,
+                    new_x1 + text_w,
+                    new_y1 + text_h
+                )   
+                #self.main_page.blk_list = blk_list.copy()
+                self.main_page.image_states[image_path].update({
+                    'blk_list': blk_list    
+                })
+                
+                # Display text if on current page
+                if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:                             
+                    self.main_page.blk_rendered.emit(translation, font_size, blk, image_path)
+                
                 # Language-specific formatting for state storage
-                if any(lang in trg_lng_cd.lower() for lang in ['zh', 'ja', 'th']):
+                if is_no_space_lang(trg_lng_cd):
                     translation = translation.replace(' ', '')
 
                 # Smart Color Override
-                font_color = get_smart_text_color(blk.font_color, font_color)
+                font_color = get_smart_text_color(blk.font_color, setting_font_color)
 
                 # Use TextItemProperties for consistent text item creation
                 text_props = TextItemProperties(
@@ -408,7 +512,9 @@ class BatchProcessor:
                     scale=1.0,
                     transform_origin=blk.tr_origin_point,
                     width=width,
+                    height=height,
                     direction=direction,
+                    vertical=vertical,
                     selection_outlines=[
                         OutlineInfo(0, len(translation), 
                         outline_color, 
@@ -427,71 +533,22 @@ class BatchProcessor:
                 })
             
             self.emit_progress(index, total_images, 9, 10, False)
-            if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                self.main_page.current_worker = None
-                break
+            if self._is_cancelled():
+                return
 
             # Saving blocks with texts to history
             self.main_page.image_states[image_path].update({
                 'blk_list': blk_list                   
             })
 
-            if image_path == file_on_display:
-                self.main_page.blk_list = blk_list
-                
-            render_save_dir = os.path.join(directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-            if not os.path.exists(render_save_dir):
-                os.makedirs(render_save_dir, exist_ok=True)
-            sv_pth = os.path.join(render_save_dir, f"{base_name}_translated{extension}")
+            # Notify UI that this page's render state is finalized.
+            # This enables a deterministic refresh when the user navigates to this page
+            # during processing and misses live blk_rendered events.
+            self.main_page.render_state_ready.emit(image_path)
 
-            renderer = ImageSaveRenderer(image)
-            viewer_state = self.main_page.image_states[image_path]['viewer_state'].copy()
-            patches = self.main_page.image_patches.get(image_path, [])
-            renderer.apply_patches(patches)
-            renderer.add_state_to_image(viewer_state)
-            renderer.save_image(sv_pth)
+            #if image_path == file_on_display:
+            if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:                
+                self.main_page.blk_list = self.main_page.image_states[image_path].get("blk_list", []).copy()
 
             self.emit_progress(index, total_images, 10, 10, False)
 
-        archive_info_list = self.main_page.file_handler.archive_info
-        if archive_info_list:
-            save_as_settings = settings_page.get_export_settings()['save_as']
-            for archive_index, archive in enumerate(archive_info_list):
-                archive_index_input = total_images + archive_index
-
-                self.emit_progress(archive_index_input, total_images, 1, 3, True)
-                if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                    self.main_page.current_worker = None
-                    break
-
-                archive_path = archive['archive_path']
-                archive_ext = os.path.splitext(archive_path)[1]
-                archive_bname = os.path.splitext(os.path.basename(archive_path))[0].strip()
-                archive_directory = os.path.dirname(archive_path)
-                save_as_ext = f".{save_as_settings[archive_ext.lower()]}"
-
-                save_dir = os.path.join(archive_directory, f"comic_translate_{timestamp}", "translated_images", archive_bname)
-                check_from = os.path.join(archive_directory, f"comic_translate_{timestamp}")
-
-                self.emit_progress(archive_index_input, total_images, 2, 3, True)
-                if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                    self.main_page.current_worker = None
-                    break
-
-                # Create the new archive
-                output_base_name = f"{archive_bname}"
-                make(save_as_ext=save_as_ext, input_dir=save_dir, 
-                    output_dir=archive_directory, output_base_name=output_base_name)
-
-                self.emit_progress(archive_index_input, total_images, 3, 3, True)
-                if self.main_page.current_worker and self.main_page.current_worker.is_cancelled:
-                    self.main_page.current_worker = None
-                    break
-
-                # Clean up temporary 
-                if os.path.exists(save_dir):
-                    shutil.rmtree(save_dir)
-                # The temp dir is removed when closing the app
-
-                if is_directory_empty(check_from):
-                    shutil.rmtree(check_from)

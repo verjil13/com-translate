@@ -13,6 +13,7 @@ __pycache__/
 env/
 venv/
 font/
+models/
 
 # uv
 .python-version
@@ -27,5 +28,6 @@ demo_*.py
 *.onnx
 *.txt
 .aider*
-
-
+*.gz
+!env.lock/
+!env.lock/*.txt

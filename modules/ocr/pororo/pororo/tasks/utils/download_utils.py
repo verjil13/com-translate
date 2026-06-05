@@ -10,12 +10,11 @@ from typing import Tuple, Union
 
 import wget
 
-from ....pororo.tasks.utils.config import CONFIGS
+from modules.ocr.pororo.pororo.tasks.utils.config import CONFIGS
+from modules.utils.download import models_base_dir as shared_models_base_dir
 
 # Get the directory of the current file
-current_file_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..', '..', '..', '..', '..'))
-models_base_dir = os.path.join(project_root, 'models/ocr/pororo/')
+models_base_dir = os.path.join(shared_models_base_dir, 'ocr', 'pororo')
 
 DEFAULT_PREFIX = {
     "model": "https://twg.kakaocdn.net/pororo/{lang}/models",
@@ -291,8 +290,10 @@ def download_from_url(
 
     logging.info("Downloading user-selected model...")
     wget.download(url, type_dir)
-    sys.stderr.write("\n")
-    sys.stderr.flush()
+    wget.download(url, type_dir)
+    if sys.stderr:
+        sys.stderr.write("\n")
+        sys.stderr.flush()
 
     return type_dir
 

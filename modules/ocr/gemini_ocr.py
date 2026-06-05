@@ -1,157 +1,284 @@
+from PIL import Image
 import numpy as np
-import requests
+import cv2
+import base64
+import os
+import threading
+import time
+
+from llama_cpp import Llama
+from llama_cpp.llama_chat_format import PaddleOCRChatHandler
 
 from .base import OCREngine
 from ..utils.textblock import TextBlock, adjust_text_line_coordinates
-from ..utils.translator_utils import MODEL_MAP
 from app.ui.settings.settings_page import SettingsPage
-
+import gc
+import torch
+import re
+import math
 
 class GeminiOCR(OCREngine):
-    """OCR engine using Google Gemini models via REST API with block processing method."""
-    
+    """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
+
+    # -------------------------
+    # INIT
+    # -------------------------
     def __init__(self):
         self.api_key = None
         self.expansion_percentage = 5
-        self.model = ''
-        self.api_base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-        self.max_output_tokens = 5000
-        
-    def initialize(self, settings: SettingsPage, model: str = 'Gemini-2.0-Flash', 
-                   expansion_percentage: int = 5) -> None:
-        """
-        Initialize the Gemini OCR with API key and parameters.
-        
-        Args:
-            settings: Settings page containing credentials
-            model: Gemini model to use for OCR (defaults to Gemini-2.0-Flash)
-            expansion_percentage: Percentage to expand text bounding boxes
-        """
+        self.model = ""
+
+        self.llm = None  # ← локальная модель
+
+    # -------------------------
+    # INIT
+    # -------------------------
+    def initialize(
+        self,
+        settings: SettingsPage,
+        model: str = "Gemini-2.0-Flash",
+        expansion_percentage: int = 5,
+    ) -> None:
         self.expansion_percentage = expansion_percentage
-        credentials = settings.get_credentials(settings.ui.tr('Google Gemini'))
-        self.api_key = credentials.get('api_key', '')
-        self.model = MODEL_MAP.get(model)
-        
-    def process_image(self, img: np.ndarray, blk_list: list[TextBlock]) -> list[TextBlock]:
-        """
-        Process an image with Gemini-based OCR using block processing approach.
-        
-        Args:
-            img: Input image as numpy array
-            blk_list: List of TextBlock objects to update with OCR text
-            
-        Returns:
-            List of updated TextBlock objects with recognized text
-        """
+
+        if self.llm is not None:
+            print("🔄 Unloading previous model...")
+            self.unload_model()
+
+        BASE_DIR = os.getcwd()
+
+        MODEL_PATH = os.path.join(
+            BASE_DIR, "models/PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-BF16.gguf"
+        )
+        MMPROJ_PATH = os.path.join(
+            BASE_DIR, "models/PaddleOCR-VL-For-Manga", "PaddleOCR-VL-For-Manga-mmproj-BF16.gguf"
+        )
+
+        self.llm = Llama(
+            model_path=MODEL_PATH,
+            chat_handler=PaddleOCRChatHandler(
+                clip_model_path=MMPROJ_PATH,
+            ),
+            n_gpu_layers=-1,
+            n_ctx=1280, #1536
+            n_batch=256,
+        )
+
+    # -------------------------
+    # PUBLIC API
+    # -------------------------
+    def unload_model(self):
+        if self.llm is not None:
+            print("🔄 Unloading previous model...")
+
+            # Принудительный cleanup llama.cpp
+            try:
+                if hasattr(self.llm, "close"):
+                    self.llm.close()
+            except:
+                pass
+
+            try:
+                if hasattr(self.llm, "_model"):
+                    self.llm._model = None
+                if hasattr(self.llm, "ctx"):
+                    self.llm.ctx = None
+            except:
+                pass
+
+            try:
+                del self.llm
+            except:
+                pass
+
+            self.llm = None
+            self.current_model = None
+
+            gc.collect()
+            torch.cuda.empty_cache()
+            gc.collect()
+            torch.cuda.empty_cache()
+
+    def process_image(self, img: np.ndarray, blk_list: list[TextBlock]):
         return self._process_by_blocks(img, blk_list)
-    
-    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]) -> list[TextBlock]:
-        """
-        Process an image by processing individual text regions separately.
-        Similar to GPTOCR approach, each text block is cropped and sent individually.
-        
-        Args:
-            img: Input image as numpy array
-            blk_list: List of TextBlock objects to update with OCR text
-            
-        Returns:
-            List of updated TextBlock objects with recognized text
-        """
+
+    # -------------------------
+    # RESIZE FUNCTION
+    # -------------------------
+    def _resize_if_needed(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
+
+        max_area = 320 * 320
+        min_area = 16 * 16
+
+        current_area = w * h
+
+        # вычисляем scale по площади
+        if current_area > max_area:
+
+            scale = math.sqrt(max_area / current_area)
+
+        elif current_area < min_area:
+
+            scale = math.sqrt(min_area / current_area)
+
+        else:
+            scale = 1.0
+
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+
+        if (scale>=1):
+            return img.resize((new_w, new_h), Image.BILINEAR)
+        else:
+            return img.resize((new_w, new_h), Image.LANCZOS)
+    # -------------------------
+    # BLOCK PROCESSING
+    # -------------------------
+    def _process_by_blocks(self, img: np.ndarray, blk_list: list[TextBlock]):
+
         for blk in blk_list:
-            # Get box coordinates
+
             if blk.bubble_xyxy is not None:
-                x1, y1, x2, y2 = blk.bubble_xyxy
+                x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
             else:
                 x1, y1, x2, y2 = adjust_text_line_coordinates(
-                    blk.xyxy, 
-                    self.expansion_percentage, 
-                    self.expansion_percentage, 
-                    img
+                    blk.xyxy,
+                    self.expansion_percentage,
+                    self.expansion_percentage,
+                    img,
                 )
-            
-            # Check if coordinates are valid
-            if x1 < x2 and y1 < y2 and x1 >= 0 and y1 >= 0 and x2 <= img.shape[1] and y2 <= img.shape[0]:
-                # Crop image and encode
-                cropped_img = img[y1:y2, x1:x2]
-                encoded_img = self.encode_image(cropped_img)
-                
-                # Get OCR result from Gemini
-                blk.text = self._get_gemini_block_ocr(encoded_img)
-                
+
+            if x1 >= x2 or y1 >= y2:
+                continue
+
+            cropped = img[y1:y2, x1:x2]
+            cropped_pil = Image.fromarray(cropped).convert("RGB")
+
+            cropped_pil = self._resize_if_needed(cropped_pil)
+
+            start = time.time()
+            blk.text = self._get_ocr(cropped_pil)
+
+            elapsed = time.time() - start
+            if elapsed > 10:
+                print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
+
         return blk_list
-    
-    def _get_gemini_block_ocr(self, base64_image: str) -> str:
-        """
-        Get OCR result for a single block from Gemini model.
-        
-        Args:
-            base64_image: Base64 encoded image
-            
-        Returns:
-            OCR result text
-        """
-        if not self.api_key:
-            raise ValueError("API key not initialized. Call initialize() first.")
-            
-        # Create API endpoint URL
-        url = f"{self.api_base_url}/{self.model}:generateContent?key={self.api_key}"
-        
-        # Setup generation config
-        generation_config = {
-            "maxOutputTokens": self.max_output_tokens,
-        }
-        
-        # Prepare payload
-        prompt = """
-        Extract the text in this image exactly as it appears. 
-        Only output the raw text with no additional comments or descriptions.
-        """
-        payload = {
-            "contents": [{
-                "parts": [
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpg",
-                            "data": base64_image
+
+    # -------------------------
+    # OCR CORE (THREAD + TIMEOUT)
+    # -------------------------
+    def _get_ocr(self, image: Image.Image) -> str:
+
+        result = [""]
+        error = [None]
+
+        def worker():
+            try:
+                # --- PIL → base64 ---
+                buffer = cv2.imencode(".jpg", np.array(image))[1]
+                base64_img = base64.b64encode(buffer).decode("utf-8")
+
+                data_uri = f"data:image/jpeg;base64,{base64_img}"
+
+                response = self.llm.create_chat_completion(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": data_uri},
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "OCR:",
+                                },
+                            ],
                         }
-                    },
-                    {
-                        "text": prompt
-                    }
-                ]
-            }],
-            "generationConfig": generation_config,
-        }
-        
-        # Make POST request to Gemini API
-        headers = {"Content-Type": "application/json"}
-        response = requests.post(
-            url,
-            headers=headers, 
-            json=payload,
-            timeout=20
-        )
-        
-        # Handle response
-        if response.status_code == 200:
-            response_data = response.json()
-            
-            # Extract generated text
-            candidates = response_data.get("candidates", [])
-            if not candidates:
-                return ""
-                
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            
-            # Concatenate all text parts
-            result = ""
-            for part in parts:
-                if "text" in part:
-                    result += part["text"]
-            
-            # Remove any leading/trailing whitespace
-            return result.strip()
-        else:
-            print(f"API error: {response.status_code} {response.text}")
+                    ],
+                    temperature=0,
+                    max_tokens=1024,
+                )
+
+                result[0] = response["choices"][0]["message"]["content"].strip()
+
+            except Exception as e:
+                error[0] = e
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=30)
+
+        if thread.is_alive():
+            print("⛔ OCR TIMEOUT (30s)")
             return ""
+
+        if error[0]:
+            print("⛔ OCR ERROR:", error[0])
+            return ""
+
+        text = result[0]
+
+        # cleanup
+        for prefix in ["OCR:", "OCR :", "Text:", "Answer:", "Answer :"]:
+            if text.startswith(prefix):
+                text = text[len(prefix) :].strip()
+                break
+
+        text = self._normalize_text(text)
+        text = self.remove_repeated_patterns(text)
+        print(f"[OCR] {repr(text[:100])}")
+
+        return text
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        - заменяет переносы строк на пробелы
+        - убирает лишние пробелы
+        """
+
+        if not text:
+            return ""
+
+        # заменяем переносы строк и табы
+        text = text.replace("\n", " ").replace("\t", " ")
+
+        # убираем множественные пробелы
+        text = " ".join(text.split())
+
+        return text.strip()
+
+    def remove_repeated_patterns(
+        self,
+        text: str,
+        max_pattern_len: int = 10,
+        single_char_limit: int = 5,
+        sequence_limit: int = 3,
+    ) -> str:
+
+        if not text:
+            return ""
+
+        max_pattern_len = int(max_pattern_len)
+        single_char_limit = int(single_char_limit)
+        sequence_limit = int(sequence_limit)
+
+        for pattern_len in range(max_pattern_len, 0, -1):
+
+            limit = single_char_limit if pattern_len == 1 else sequence_limit
+
+            regex = re.compile(rf"(.{{{pattern_len}}})(?:\1){{{limit},}}", flags=re.DOTALL)
+
+            replacement = r"\1" * limit
+
+            while True:
+                new_text = regex.sub(replacement, text)
+
+                if new_text == text:
+                    break
+
+                text = new_text
+
+        return text

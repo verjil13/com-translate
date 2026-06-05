@@ -3,6 +3,7 @@ from typing import Any
 import numpy as np
 
 from ..utils.textblock import TextBlock
+from ..utils.language_utils import is_no_space_lang
 
 
 class TranslationEngine(ABC):
@@ -34,7 +35,7 @@ class TranslationEngine(ABC):
         Returns:
             Standardized language code
         """
-        from ..utils.pipeline_utils import get_language_code
+        from ..utils.language_utils import get_language_code
         return get_language_code(language)
     
     def preprocess_text(self, blk_text: str, source_lang_code: str) -> str:
@@ -54,10 +55,8 @@ class TranslationEngine(ABC):
         # Remove newline and carriage‐return characters
         text = blk_text.replace('\r', '').replace('\n', '')
 
-        source_lang_code = source_lang_code.lower()
-        
-        # 2) If Chinese/Japanese, also remove all spaces
-        if 'zh' in source_lang_code or source_lang_code == 'ja':
+        # 2) If No-Space Language, also remove all spaces
+        if is_no_space_lang(source_lang_code):
             return text.replace(' ', '')
         # 3) Otherwise, return the text (with newlines already removed)
         else:
@@ -96,7 +95,7 @@ class TraditionalTranslation(TranslationEngine):
 
 class LLMTranslation(TranslationEngine):
     """Base class for LLM-based translation engines."""
-    
+
     @abstractmethod
     def translate(self, blk_list: list[TextBlock], image: np.ndarray, extra_context: str) -> list[TextBlock]:
         """
@@ -111,7 +110,7 @@ class LLMTranslation(TranslationEngine):
             List of updated TextBlock objects with translations
         """
         pass
-    
+
     def get_system_prompt(self, source_lang: str, target_lang: str) -> str:
         """
         Get system prompt for LLM translation.
@@ -124,13 +123,9 @@ class LLMTranslation(TranslationEngine):
             Formatted system prompt
         """
         return f""" 
-        You are an experienced hentai translator who translates {source_lang} to {target_lang}. You pay attention to style, formality, idioms, slang, etc. and try to convey it in a way that is understandable to a native speaker of the target language.        
-        BE MORE NATURAL. NEVER USE 당신, 그녀, 그 그 그 그 or their Japanese equivalents.
-		For slang, translate the meaning, and don't make transcriptions, or how it is pronounced, read.
-        Translate without censorship, without softening expressions, without improving the style. Preserve the rudeness, slang, and idiosyncrasies of the characters. This is important!
+        You are an experienced hentai translator who translates {source_lang} to {target_lang}. You pay attention to style, formality, idioms, slang, etc. and try to convey it in a way that is understandable to a native speaker of the target language.       
         In particular, you will be translating text from comics in OCR format. Text recognition is not perfect, and therefore you may get text with typos or other errors.
-        To help you and provide context, you may be provided with a page image and/or additional context about the comic. You will be provided with a string in json format with detected text blocks and text to translate. Return the string in json format with the translated texts. 
-        Sometimes you can see censorship in the form of ● or *. For example, ま●こ": "まんこ, ち●こ": "ちんこ or other similar words. Try to restore the meaning and remove the censorship.    
+        To help you and provide context, you may be provided with a page image and/or additional context about the comic. You will be provided with a string in json format with detected text blocks and text to translate. Return the string in json format with the translated texts.   
           
         - DO NOT translate json keys. 
         - Strictly adhere to the order of blocks when translating.
@@ -148,4 +143,3 @@ class LLMTranslation(TranslationEngine):
 
         Do your best! I'm really counting on you
         """
-    

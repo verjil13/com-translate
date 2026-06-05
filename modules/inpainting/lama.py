@@ -1,7 +1,5 @@
-import os
 import numpy as np
-import imkit as imk
-import onnxruntime as ort
+import logging
 from ..utils.device import get_providers
 
 from ..utils.inpainting import (
@@ -9,17 +7,21 @@ from ..utils.inpainting import (
     load_jit_model,
 )
 from ..utils.download import ModelDownloader, ModelID
+from modules.utils.onnx import make_session
+from modules.utils.torch_autocast import TorchAutocastMixin
 from .base import InpaintModel
 from .schema import Config
 
-
-current_file_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
+logger = logging.getLogger(__name__)
 
 
-class LaMa(InpaintModel):
+class LaMa(TorchAutocastMixin, InpaintModel):
     name = "lama"
     pad_mod = 8
+
+    @staticmethod
+    def should_use_autocast(device: str) -> bool:
+        return str(device).split(":", 1)[0].lower() != "xpu"
 
     def init_model(self, device, **kwargs):
         self.backend = kwargs.get("backend")
@@ -27,11 +29,19 @@ class LaMa(InpaintModel):
             ModelDownloader.get(ModelID.LAMA_ONNX)
             onnx_path = ModelDownloader.primary_path(ModelID.LAMA_ONNX)
             providers = get_providers(device)
-            self.session = ort.InferenceSession(onnx_path, providers=providers)
+            self.session = make_session(onnx_path, providers=providers)
         else:
+            import torch
             ModelDownloader.get(ModelID.LAMA_JIT)
             local_path = ModelDownloader.primary_path(ModelID.LAMA_JIT) 
             self.model = load_jit_model(local_path, device)
+            self.setup_torch_autocast(torch, device)
+            if not self.should_use_autocast(device):
+                logger.info(
+                    "Disabling LaMa autocast on device '%s' because the TorchScript FFT path requires float32.",
+                    device,
+                )
+                self.use_autocast = False
 
     @staticmethod
     def is_downloaded() -> bool:
@@ -62,7 +72,13 @@ class LaMa(InpaintModel):
             import torch  # noqa
             image_t = torch.from_numpy(image_n).unsqueeze(0).to(self.device)
             mask_t = torch.from_numpy(mask_n).unsqueeze(0).to(self.device)
-            inpainted_image = self.model(image_t, mask_t)
+            with torch.inference_mode():
+                inpainted_image = self.run_with_torch_autocast(
+                    torch_module=torch,
+                    fn=lambda: self.model(image_t, mask_t),
+                    logger=logger,
+                    engine_name=self.__class__.__name__,
+                )
             cur_res = inpainted_image[0].permute(1, 2, 0).detach().cpu().numpy()
             cur_res = np.clip(cur_res * 255, 0, 255).astype("uint8")
             # cur_res is already in RGB format

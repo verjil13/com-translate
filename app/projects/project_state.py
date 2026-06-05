@@ -1,148 +1,68 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import msgpack
 import os
 import tempfile
 import zipfile
 import shutil
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import imkit as imk
+
+from modules.utils.archives import close_pdf_cache
 from .parsers import ProjectEncoder, ProjectDecoder, ensure_string_keys
+from .project_state_v2 import (
+    close_cached_connection as close_state_v2_cached_connection,
+    ensure_lazy_blob_materialized,
+    is_sqlite_project_file,
+    load_state_from_proj_file_v2,
+    remap_project_file_path,
+    save_state_to_proj_file_v2,
+)
 
 if TYPE_CHECKING:
     from controller import ComicTranslate
 
+def _to_archive_relpath(rel_path: str) -> str:
+    """
+    Normalize relative paths stored inside project state.
+
+    We store paths using POSIX separators so project files created on Windows
+    can be loaded on macOS/Linux (and vice versa).
+    """
+    # Keep this strictly relative; callers control the base directory.
+    return str(PurePosixPath(*str(rel_path).replace("\\", "/").split("/")))
+
+def _join_from_archive_relpath(base_dir: str, rel_path: str) -> str:
+    """Join a POSIX-style relative path onto a platform-native base directory."""
+    posix = _to_archive_relpath(rel_path)
+    parts = [p for p in posix.split("/") if p]
+    return os.path.join(base_dir, *parts)
+
 def save_state_to_proj_file(comic_translate: ComicTranslate, file_name: str):
-    """
-    Saves the state of the comic_translate object to a msgpack file and a folder of unique images.
-
-    Parameters:
-        comic_translate: The comic_translate object containing the state.
-        file_name (str): The path to the output msgpack file.
-    """
-    encoder = ProjectEncoder()
-
-    # Create a temporary directory for unique images
-    with tempfile.TemporaryDirectory() as temp_dir:
-        unique_images_dir = os.path.join(temp_dir, "unique_images")
-        os.makedirs(unique_images_dir, exist_ok=True)
-        unique_patches_dir = os.path.join(temp_dir, "unique_patches")
-        os.makedirs(unique_patches_dir, exist_ok=True)
-
-        # Initialize the state dictionary
-        state = {
-            'current_image_index': comic_translate.curr_img_idx,
-            'image_states': comic_translate.image_states,
-            'unique_images': {},  # Will store id to file_name mapping
-            'image_data_references': {},
-            'image_files_references': {},
-            'in_memory_history_references': {},
-            'image_history_references': {},
-            'original_image_files': comic_translate.image_files,
-            'current_history_index': comic_translate.current_history_index,
-            'displayed_images': list(comic_translate.displayed_images),
-            'loaded_images': comic_translate.loaded_images,
-            'image_patches': {}, 
-            'llm_extra_context': comic_translate.settings_page.get_llm_settings().get('extra_context', ''),
-            'webtoon_mode': comic_translate.webtoon_mode,
-            'webtoon_view_state': comic_translate.image_viewer.webtoon_view_state
-
-        }
-
-        image_id_counter = 0
-        image_path_to_id = {}
-        unique_images = {}
-
-        # Helper function to copy image and assign ID
-        def copy_and_assign(file_path):
-            nonlocal image_id_counter
-            if file_path not in image_path_to_id:
-                image_id = image_id_counter
-                image_id_counter += 1
-                image_path_to_id[file_path] = image_id
-                
-                bname = os.path.basename(file_path)
-                new_file_path = os.path.join(unique_images_dir, bname)
-                
-                # Copy file from disk
-                shutil.copy2(file_path, new_file_path)
-                unique_images[image_id] = bname
-            
-            return image_path_to_id[file_path]
-
-        # Process in_memory_history
-        for file, history in comic_translate.in_memory_history.items():
-            state['in_memory_history_references'][file] = []
-            for idx, img in enumerate(history):
-                path = comic_translate.image_history[file][idx]
-                if idx == comic_translate.current_history_index.get(file, 0):
-                    # Link to image_data
-                    image_id = copy_and_assign(path)
-                    state['image_data_references'][file] = image_id
-                else:
-                    image_id = copy_and_assign(path)
-                state['in_memory_history_references'][file].append(image_id)
-
-        # Process image_files and image_history
-        for file_path in comic_translate.image_files:
-            # Always assign a fresh image-ID → file mapping
-            image_id = copy_and_assign(file_path)
-            state['image_files_references'][file_path] = image_id
-
-            # If there is history, also populate the history list
-            if file_path in comic_translate.image_history:
-                state['image_history_references'][file_path] = []
-                for path in comic_translate.image_history[file_path]:
-                    hist_id = copy_and_assign(path)
-                    state['image_history_references'][file_path].append(hist_id)
-
-        # Process image patches
-        for page_path, patch_list in comic_translate.image_patches.items():
-            state['image_patches'][page_path] = []
-            for patch in patch_list:
-                src_png  = patch['png_path'] # absolute path in temp dir
-                sub_dir  = os.path.join(unique_patches_dir,
-                                        os.path.basename(page_path))  # keep per-page sub-folder
-                os.makedirs(sub_dir, exist_ok=True)
-
-                dst_png  = os.path.join(sub_dir, os.path.basename(src_png))
-                shutil.copy2(src_png, dst_png)
-
-                state['image_patches'][page_path].append({
-                    'bbox': patch['bbox'],
-                    'png_path': os.path.relpath(dst_png, unique_patches_dir),  # <–– relative
-                    'hash': patch['hash'],
-                })     
+    # Default writer: v2 SQLite container (incremental-friendly, portable).
+    return save_state_to_proj_file_v2(comic_translate, file_name)
 
 
-        state['unique_images'] = ensure_string_keys(unique_images)
+def close_state_store(file_name: str | None = None) -> None:
+    close_state_v2_cached_connection(file_name)
+    # Release cached pdfplumber objects to free memory.
+    close_pdf_cache()
 
-        # Serialize the state to msgpack
-        msgpack_file = os.path.join(temp_dir, "state.msgpack")
-        with open(msgpack_file, 'wb') as file:
-            msgpack.pack(state, file, default=encoder.encode, use_bin_type=True)
+def ensure_project_blob_materialized(path: str) -> bool:
+    return ensure_lazy_blob_materialized(path)
 
-        # Create a zip file containing the msgpack file and unique_images folder
-        zip_file_name = file_name
-        with zipfile.ZipFile(zip_file_name, 'w', zipfile.ZIP_STORED) as zipf:
-            zipf.write(msgpack_file, arcname="state.msgpack")
-            # Save unique images in the zip file
-            for root, _, files in os.walk(unique_images_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, temp_dir)
-                    zipf.write(file_path, arcname=arcname)
 
-            # Save unique patches in the zip file
-            for root, _ , files in os.walk(unique_patches_dir):
-                for f in files:
-                    fpath = os.path.join(root, f)
-                    arcname = os.path.relpath(fpath, temp_dir)
-                    zipf.write(fpath, arcname=arcname)
+def ensure_project_path_materialized(path: str) -> bool:
+    # Backward-compatible alias kept for older imports.
+    return ensure_project_blob_materialized(path)
 
 
 def load_state_from_proj_file(comic_translate: ComicTranslate, file_name: str):
+    if is_sqlite_project_file(file_name):
+        return load_state_from_proj_file_v2(comic_translate, file_name)
+
     decoder = ProjectDecoder()
 
     if not hasattr(comic_translate, 'temp_dir'):
@@ -309,7 +229,7 @@ def load_state_from_proj_file(comic_translate: ComicTranslate, file_name: str):
         for page_path, patch_list in saved_patches.items():
             new_list = []
             for p in patch_list:
-                abs_png = os.path.join(unique_patches_dir, p['png_path'])
+                abs_png = _join_from_archive_relpath(unique_patches_dir, p.get('png_path', ''))
                 if os.path.isfile(abs_png):  
                     new_list.append({'bbox': p['bbox'],
                                     'png_path': abs_png,

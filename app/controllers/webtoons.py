@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 @dataclass
 class LazyLoadingConfig:
     enabled: bool = True
-    max_loaded_pages: int = 10
+    max_loaded_pages: int = 5
     viewport_buffer: int = 2
     load_timer_interval: int = 50
     scroll_debounce_delay: int = 150
@@ -166,6 +166,7 @@ class WebtoonController:
         # Clear the scene to remove multi-page items
         self.main.blk_list.clear()
         self.image_viewer.clear_scene()
+        self.main.image_ctrl.force_default_view_on_next_image_load()
         
         # Make sure the image viewer is the current widget
         self.main.central_stack.setCurrentWidget(self.image_viewer)
@@ -201,11 +202,8 @@ class WebtoonController:
                 old_index = self.main.curr_img_idx
                 self.main.curr_img_idx = page_index
                 
-                # Update the page list selection without triggering signals
-                self.main.page_list.blockSignals(True)
-                self.main.page_list.setCurrentRow(page_index)
-                self.main.image_ctrl.highlight_card(page_index)
-                self.main.page_list.blockSignals(False)
+                # Update the page list selection without triggering signals.
+                self.main.image_ctrl.set_page_list_current_row(page_index, emit_signal=False)
                 
                 # In lazy webtoon mode, do minimal state management to avoid interfering with scrolling
                 # Only load language settings and basic state
@@ -223,6 +221,12 @@ class WebtoonController:
                     
                 # Clear text edits
                 self.main.text_ctrl.clear_text_edits()
+
+                # Page-skip popup policy:
+                # - show on explicit programmatic jumps (page list/report)
+                # - hide during passive scrolling page changes
+                explicit_navigation = bool(getattr(self.image_viewer, "_programmatic_scroll", False))
+                self.main.image_ctrl.handle_webtoon_page_focus(file_path, explicit_navigation)
                     
             finally:
                 # Use a timer to reset the processing flag to avoid blocking legitimate changes
@@ -249,6 +253,7 @@ class WebtoonController:
             success = self.switch_to_webtoon_mode()
             if success:
                 self.main.webtoon_mode = True
+                self.main.mark_project_dirty()
             else:
                 # Failed to switch, revert toggle
                 self.main.webtoon_toggle.blockSignals(True)
@@ -258,3 +263,4 @@ class WebtoonController:
             # Switch back to regular mode
             self.main.webtoon_mode = False
             self.switch_to_regular_mode()
+            self.main.mark_project_dirty()

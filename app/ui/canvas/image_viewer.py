@@ -324,11 +324,11 @@ class ImageViewer(QGraphicsView):
         qimage = QtGui.QImage(img_array.data, width, height, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         return qimage
 
-    def display_image_array(self, img_array: np.ndarray):
+    def display_image_array(self, img_array: np.ndarray, fit: bool = True):
         qimage = self.qimage_from_array(img_array)
         pixmap = QtGui.QPixmap.fromImage(qimage)
         self.clear_scene()
-        self.setPhoto(pixmap)
+        self.setPhoto(pixmap, fit=fit)
 
     def clear_scene(self):
         self.webtoon_manager.clear() 
@@ -340,11 +340,12 @@ class ImageViewer(QGraphicsView):
         self.photo.setShapeMode(QGraphicsPixmapItem.BoundingRectShape)
         self._scene.addItem(self.photo)
 
-    def setPhoto(self, pixmap: QtGui.QPixmap = None):
+    def setPhoto(self, pixmap: QtGui.QPixmap = None, fit: bool = True):
         if pixmap and not pixmap.isNull():
             self.empty = False
             self.photo.setPixmap(pixmap)
-            self.fitInView()
+            if fit:
+                self.fitInView()
         else:
             self.empty = True
             self.photo.setPixmap(QtGui.QPixmap())
@@ -416,6 +417,9 @@ class ImageViewer(QGraphicsView):
         item.setPos(QPointF(*properties.position))
         item.setRotation(properties.rotation)
         item.setScale(properties.scale)
+
+        item.set_vertical(bool(properties.vertical))
+        item.set_color(properties.text_color)
             
         # Set selection outlines
         item.selection_outlines = properties.selection_outlines.copy()
@@ -431,6 +435,12 @@ class ImageViewer(QGraphicsView):
         self.connect_text_item.emit(item)
         
         return item
+
+    def get_selected_text_items(self) -> list[TextBlockItem]:
+        return [item for item in self.text_items if item.selected]
+
+    def get_selected_rectangles(self) -> list[MoveableRectItem]:
+        return [item for item in self.rectangles if item.selected]
     
     # InteractionManager proxy methods
     def sel_rot_item(self):
@@ -516,9 +526,17 @@ class ImageViewer(QGraphicsView):
         }
 
     def load_state(self, state: Dict):
-        self.setTransform(QtGui.QTransform(*state['transform']))
-        self.centerOn(QPointF(*state['center']))
-        self.setSceneRect(QRectF(*state['scene_rect']))
+        scene_rect = state.get('scene_rect')
+        if scene_rect:
+            self.setSceneRect(QRectF(*scene_rect))
+
+        transform = state.get('transform')
+        if transform:
+            self.setTransform(QtGui.QTransform(*transform))
+
+        center = state.get('center')
+        if center:
+            self.centerOn(QPointF(*center))
 
         for data in state['rectangles']:
             x, y, w, h = data['rect']

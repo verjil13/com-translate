@@ -4,6 +4,8 @@ import copy
 from PIL import Image, ImageDraw
 from collections import defaultdict, deque
 from ..detection.utils.text_lines import group_items_into_lines
+from modules.detection.utils.geometry import does_rectangle_fit, is_mostly_contained
+from modules.utils.language_utils import is_no_space_lang
 
 class TextBlock(object):
     """
@@ -24,8 +26,8 @@ class TextBlock(object):
                  alignment: str = '',
                  source_lang: str = "",
                  target_lang: str = "",
-                 min_font_size: int = 0,
-                 max_font_size: int = 0,
+                 min_font_size: float = 0,
+                 max_font_size: float = 0,
                  font_color: tuple = (),
                  direction: str = "",
                  **kwargs) -> None:
@@ -85,10 +87,10 @@ class TextBlock(object):
         new_block = TextBlock()
         
         # Copy numpy arrays properly
-        new_block.xyxy = self.xyxy.copy() if isinstance(self.xyxy, np.ndarray) else self.xyxy
-        new_block.segm_pts = self.segm_pts.copy() if isinstance(self.segm_pts, np.ndarray) else self.segm_pts
-        new_block.bubble_xyxy = self.bubble_xyxy.copy() if isinstance(self.bubble_xyxy, np.ndarray) else self.bubble_xyxy
-        new_block.inpaint_bboxes = self.inpaint_bboxes.copy() if isinstance(self.inpaint_bboxes, np.ndarray) else self.inpaint_bboxes
+        new_block.xyxy = self.xyxy.copy() if isinstance(self.xyxy, np.ndarray) else copy.deepcopy(self.xyxy)
+        new_block.segm_pts = self.segm_pts.copy() if isinstance(self.segm_pts, np.ndarray) else copy.deepcopy(self.segm_pts)
+        new_block.bubble_xyxy = self.bubble_xyxy.copy() if isinstance(self.bubble_xyxy, np.ndarray) else copy.deepcopy(self.bubble_xyxy)
+        new_block.inpaint_bboxes = self.inpaint_bboxes.copy() if isinstance(self.inpaint_bboxes, np.ndarray) else copy.deepcopy(self.inpaint_bboxes)
         
         # Copy simple attributes
         new_block.text_class = self.text_class
@@ -274,4 +276,26 @@ def adjust_blks_size(blk_list: List[TextBlock], img: np.ndarray, w_expan: int = 
         coords = blk.xyxy
         expanded_coords = adjust_text_line_coordinates(coords, w_expan, h_expan, img)
         blk.xyxy[:] = expanded_coords
+
+def lists_to_blk_list(blk_list: list[TextBlock], texts_bboxes: list, texts_string: list):  
+    group = list(zip(texts_bboxes, texts_string))  
+
+    for blk in blk_list:
+        blk_entries = []
+        
+        for line, text in group:
+            if does_rectangle_fit(blk.xyxy, line):
+                blk_entries.append((line, text)) 
+            elif is_mostly_contained(blk.xyxy, line, 0.5):
+                blk_entries.append((line, text)) 
+
+        # Sort and join text entries
+        sorted_entries = sort_textblock_rectangles(blk_entries, blk.source_lang_direction)
+        
+        if is_no_space_lang(blk.source_lang):
+            blk.text = ''.join(text for bbox, text in sorted_entries)
+        else:
+            blk.text = ' '.join(text for bbox, text in sorted_entries)
+
+    return blk_list
 
