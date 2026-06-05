@@ -8,7 +8,8 @@ from .microsoft_ocr import MicrosoftOCR
 from .google_ocr import GoogleOCR
 from .gpt_ocr import GPTOCR
 from .ppocr import PPOCRv5Engine
-from .manga_ocr.mobile import MangaOCRMobileONNXEngine
+#from .manga_ocr.mobile import MangaOCRMobileONNXEngine
+from .manga_ocr.onnx_engine import MangaOCREngineONNX
 from .pororo.onnx_engine import PororoOCREngineONNX  
 from .gemini_ocr import GeminiOCR
 from .user_ocr import UserOCR
@@ -222,7 +223,7 @@ class OCRFactory:
             engine = MangaOCREngine()
             engine.initialize(device=device)
         else:
-            engine = MangaOCRMobileONNXEngine()
+            engine = MangaOCREngineONNX()#MangaOCRMobileONNXEngine()
             engine.initialize(device=device)
 
         return engine
