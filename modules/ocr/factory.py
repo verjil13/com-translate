@@ -8,7 +8,7 @@ from .microsoft_ocr import MicrosoftOCR
 from .google_ocr import GoogleOCR
 from .gpt_ocr import GPTOCR
 from .ppocr import PPOCRv5Engine
-from .manga_ocr.onnx_engine import MangaOCREngineONNX
+from .manga_ocr.mobile import MangaOCRMobileONNXEngine
 from .pororo.onnx_engine import PororoOCREngineONNX  
 from .gemini_ocr import GeminiOCR
 from .user_ocr import UserOCR
@@ -166,7 +166,8 @@ class OCRFactory:
         # Language-specific factory functions (for Default model)
         language_factories = {
             'Japanese': lambda s: cls._create_manga_ocr(s, effective_backend),
-            'Korean': lambda s: cls._create_pororo_ocr(s, effective_backend),
+            # 'Korean': lambda s: cls._create_pororo_ocr(s, effective_backend),
+            'Korean': lambda s: cls._create_ppocr(s, 'ko', effective_backend),
             'Chinese': lambda s: cls._create_ppocr(s, 'ch', effective_backend),
             'Russian': lambda s: cls._create_ppocr(s, 'ru', effective_backend),
             'French': lambda s: cls._create_ppocr(s, 'latin', effective_backend),
@@ -221,7 +222,7 @@ class OCRFactory:
             engine = MangaOCREngine()
             engine.initialize(device=device)
         else:
-            engine = MangaOCREngineONNX()
+            engine = MangaOCRMobileONNXEngine()
             engine.initialize(device=device)
 
         return engine
@@ -233,11 +234,11 @@ class OCRFactory:
         if backend.lower() == 'torch' and torch_available():
             from .pororo.engine import PororoOCREngine
             engine = PororoOCREngine()
-            engine.initialize(device=device)
+            engine.initialize(device=device, use_text_lines=True)
         else:
             engine = PororoOCREngineONNX()
-            engine.initialize(device=device)
-
+            engine.initialize(device=device, use_text_lines=True)
+        
         return engine
 
     @staticmethod
@@ -247,11 +248,11 @@ class OCRFactory:
             from .ppocr.torch.engine import PPOCRv5TorchEngine
             device = resolve_device(settings.is_gpu_enabled(), 'torch')
             engine = PPOCRv5TorchEngine()
-            engine.initialize(lang=lang, device=device)
+            engine.initialize(lang=lang, device=device, use_text_lines=True)
         else:
             engine = PPOCRv5Engine()
-            engine.initialize(lang=lang, device=device)
-
+            engine.initialize(lang=lang, device=device, use_text_lines=True)
+        
         return engine
 
     @staticmethod

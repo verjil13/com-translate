@@ -45,10 +45,6 @@ class RenderMixin:
         format_translations(
             blocks, target_lang_code, upper_case=render_settings.upper_case
         )
-        if is_no_space_lang(target_lang_code):
-            for block in blocks:
-                if block.translation:
-                    block.translation = block.translation.replace(" ", "")
 
         page_state["blk_list"] = blocks
         page_state["skip_render"] = False
@@ -135,6 +131,7 @@ class RenderMixin:
                 max_font_size,
                 min_font_size,
                 vertical,
+                is_no_space_lang(target_lang_code),
                 #return_metrics=True,
             )
 
