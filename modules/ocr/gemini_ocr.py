@@ -129,9 +129,9 @@ class GeminiOCR(OCREngine):
         new_h = max(1, int(h * scale))
 
         if (scale>=1):
-            return img.resize((new_w, new_h), Image.BILINEAR)
+            return img.resize((new_w, new_h), Image.LANCZOS)  #  BILINEAR
         else:
-            return img.resize((new_w, new_h), Image.LANCZOS)
+            return img.resize((new_w, new_h), Image.INTER_AREA)  # LANCZOS
     # -------------------------
     # BLOCK PROCESSING
     # -------------------------
@@ -139,15 +139,17 @@ class GeminiOCR(OCREngine):
 
         for blk in blk_list:
 
-            if blk.bubble_xyxy is not None:
-                x1, y1, x2, y2 = map(int, blk.bubble_xyxy)
+            if blk.xyxy is not None:
+                x1, y1, x2, y2 = blk.xyxy
+            elif blk.bubble_xyxy is not None:
+                x1, y1, x2, y2 = blk.bubble_xyxy
             else:
                 x1, y1, x2, y2 = adjust_text_line_coordinates(
                     blk.xyxy,
                     self.expansion_percentage,
                     self.expansion_percentage,
                     img,
-                )
+                )           
 
             if x1 >= x2 or y1 >= y2:
                 continue
