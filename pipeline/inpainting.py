@@ -8,13 +8,15 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QBrush
 
 from modules.utils.device import resolve_device
-from modules.utils.image_utils import build_block_mask_data
+from modules.utils.image_utils import build_block_mask_data, build_bubble_clip_mask, clip_mask_to_bubble, clip_mask_components_to_bubble
 from modules.utils.pipeline_config import inpaint_map, get_config, get_inpainter_backend
 from modules.utils.textblock import adjust_text_line_coordinates
 from pipeline.inpainting_boxes import merge_overlapping_padded_boxes
 from pipeline.webtoon_utils import filter_and_convert_visible_blocks, restore_original_block_coordinates
 
 logger = logging.getLogger(__name__)
+
+FAST_FILL_BUBBLE_INSET = 7
 
 
 def call_inpaint_image(inpainting_handler, image: np.ndarray, mask: np.ndarray, config, blk_list: list | None = None):
@@ -402,21 +404,36 @@ class InpaintingHandler:
         for idx, block in enumerate(blk_list):
             if getattr(block, "xyxy", None) is None or len(block.xyxy) < 4:
                 continue
+            if getattr(block, "text_class", None) != "text_bubble" or getattr(block, "bubble_xyxy", None) is None:
+                continue
             bounds = self._get_fast_fill_bounds(block, image)
             if bounds is None:
                 continue
             x1, y1, x2, y2 = bounds
             residual_crop = residual_mask[y1:y2, x1:x2]
-            initial_overlap = int(np.count_nonzero(residual_crop))
-            if initial_overlap <= 0:
+            if not np.any(residual_crop):
                 continue
             crop_mask = np.where(residual_crop > 0, 255, 0).astype(np.uint8)
+            if getattr(block, "text_class", None) == "text_bubble" and getattr(block, "bubble_xyxy", None) is not None:
+                crop_mask = clip_mask_components_to_bubble(
+                    crop_mask,
+                    bounds,
+                    block.bubble_xyxy,
+                    inset=FAST_FILL_BUBBLE_INSET,
+                    image=image,
+                    seed_bbox=block.xyxy,
+                )
+                
+            initial_overlap = int(np.count_nonzero(crop_mask))
+            if initial_overlap <= 0:
+                continue
             success, reason = self._fast_fill_block(cleaned_image, residual_mask, block, bounds, crop_mask)
             if not success:
                 fallback_mask, fallback_bounds = build_block_mask_data(
                     image,
                     block,
                     require_text_or_translation=False,
+                    clip_to_bubble=True,
                 )
                 if fallback_mask is None or fallback_bounds is None:
                     logger.info(
@@ -500,8 +517,32 @@ class InpaintingHandler:
             return False, color_reason
 
         fill_region = self._get_associated_residual_components(residual_crop, masked_region)
+        
+        if getattr(block, "text_class", None) == "text_bubble" and getattr(block, "bubble_xyxy", None) is not None:
+            bubble_mask = build_bubble_clip_mask(
+                fill_region.shape[:2],
+                bounds,
+                block.bubble_xyxy,
+                inset=FAST_FILL_BUBBLE_INSET,
+                image=cleaned_image,
+                seed_bbox=block.xyxy,
+            )
+            if bubble_mask is not None:
+                num_labels, labeled_fill = imk.connected_components(fill_region, connectivity=4)
+                overlapping_labels = np.unique(labeled_fill[bubble_mask])
+                keep_labels = overlapping_labels[overlapping_labels > 0]
+                if keep_labels.size > 0:
+                    fill_region = np.isin(labeled_fill, keep_labels)
+                else:
+                    fill_region = np.zeros_like(fill_region)
+        else:
+            bubble_mask = None
+
         soft_mask = imk.gaussian_blur(fill_region.astype(np.uint8) * 255, 1.0).astype(np.float32) / 255.0
         soft_mask = np.clip(soft_mask, 0.0, 1.0)[..., np.newaxis]
+        
+        if bubble_mask is not None:
+            soft_mask = soft_mask * bubble_mask[..., np.newaxis]
         crop_f = crop.astype(np.float32)
         fill_rgb = np.broadcast_to(fill_color, crop.shape).astype(np.float32)
         blended = crop_f * (1.0 - soft_mask) + fill_rgb * soft_mask

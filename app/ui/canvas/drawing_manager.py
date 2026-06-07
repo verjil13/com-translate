@@ -10,6 +10,7 @@ from app.ui.commands.brush import BrushStrokeCommand, ClearBrushStrokesCommand, 
                             SegmentBoxesCommand, EraseUndoCommand
 from app.ui.commands.base import PathCommandBase as pcb
 import imkit as imk
+from modules.utils.image_utils import clip_mask_to_bubble, clip_mask_components_to_bubble
 
 
 class DrawingManager:
@@ -427,19 +428,19 @@ class DrawingManager:
                         and getattr(blk, "text_class", None) == "text_bubble"
                         and getattr(blk, "bubble_xyxy", None) is not None
                     ):
-                        bx1, by1, bx2, by2 = [int(v) for v in blk.bubble_xyxy]
-                        inset = 5
-                        ix1 = max(0, min(cx2 - cx1, bx1 + inset - cx1))
-                        iy1 = max(0, min(cy2 - cy1, by1 + inset - cy1))
-                        ix2 = max(ix1, min(cx2 - cx1, bx2 - inset - cx1))
-                        iy2 = max(iy1, min(cy2 - cy1, by2 - inset - cy1))
-                        bubble_clip = np.zeros(crop_mask.shape[:2], dtype=np.uint8)
-                        bubble_clip[iy1:iy2, ix1:ix2] = 255
-                        crop_mask = np.bitwise_and(crop_mask, bubble_clip)
-                    
-                    # Dilate slightly to fully cover the letters and their anti-aliased margins
-                    dil_kernel = np.ones((5, 5), np.uint8)
-                    crop_mask = imk.dilate(crop_mask, dil_kernel, iterations=1)
+                        crop_mask = clip_mask_components_to_bubble(
+                            crop_mask,
+                            (cx1, cy1, cx2, cy2),
+                            blk.bubble_xyxy,
+                            inset=5,
+                            image=image,
+                            seed_bbox=blk.xyxy,
+                            dilate_kernel_size=5,
+                            dilate_iterations=1,
+                        )
+                    else:
+                        dil_kernel = np.ones((5, 5), np.uint8)
+                        crop_mask = imk.dilate(crop_mask, dil_kernel, iterations=1)
             except Exception as e:
                 print(f"Failed to generate pixel-accurate mask in make_segmentation_stroke_data: {e}")
                 crop_mask = None
