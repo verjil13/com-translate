@@ -1,4 +1,3 @@
-from PIL import Image
 import numpy as np
 import cv2
 import base64
@@ -99,9 +98,8 @@ class MicrosoftOCR(OCREngine):
     # -------------------------
     # RESIZE FUNCTION
     # -------------------------
-
-    def _resize_if_needed(self, img: Image.Image) -> Image.Image:
-        w, h = img.size
+    def _resize_if_needed(self, img: np.ndarray) -> np.ndarray:
+        h, w = img.shape[:2]
 
         max_area = 320 * 320
         min_area = 16 * 16
@@ -110,23 +108,25 @@ class MicrosoftOCR(OCREngine):
 
         # вычисляем scale по площади
         if current_area > max_area:
-
             scale = math.sqrt(max_area / current_area)
-
         elif current_area < min_area:
-
             scale = math.sqrt(min_area / current_area)
-
         else:
             scale = 1.0
 
         new_w = max(1, int(w * scale))
         new_h = max(1, int(h * scale))
 
-        if scale >= 1:
-            return img.resize((new_w, new_h), Image.LANCZOS)  #  BILINEAR
-        else:
-            return img.resize((new_w, new_h), Image.INTER_AREA)  # LANCZOS
+        if new_w == w and new_h == h:
+            return img
+
+        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
+
+        return cv2.resize(
+            img,
+            (new_w, new_h),
+            interpolation=interpolation,
+        )
 
     # -------------------------
     # BLOCK PROCESSING
@@ -151,12 +151,12 @@ class MicrosoftOCR(OCREngine):
                 continue
 
             cropped = img[y1:y2, x1:x2]
-            cropped_pil = Image.fromarray(cropped).convert("RGB")
+            # cropped_pil = Image.fromarray(cropped).convert("RGB")
 
-            cropped_pil = self._resize_if_needed(cropped_pil)
+            cropped = self._resize_if_needed(cropped)
 
             start = time.time()
-            blk.text = self._get_ocr(cropped_pil)
+            blk.text = self._get_ocr(cropped)
 
             elapsed = time.time() - start
             if elapsed > 10:
@@ -167,7 +167,7 @@ class MicrosoftOCR(OCREngine):
     # -------------------------
     # OCR CORE (THREAD + TIMEOUT)
     # -------------------------
-    def _get_ocr(self, image: Image.Image) -> str:
+    def _get_ocr(self, image: np.ndarray) -> str:
 
         result = [""]
         error = [None]
@@ -175,7 +175,7 @@ class MicrosoftOCR(OCREngine):
         def worker():
             try:
                 # --- PIL → base64 ---
-                buffer = cv2.imencode(".jpg", np.array(image))[1]
+                buffer = cv2.imencode(".jpg", image)[1]
                 base64_img = base64.b64encode(buffer).decode("utf-8")
 
                 data_uri = f"data:image/jpeg;base64,{base64_img}"
