@@ -60,13 +60,15 @@ class YOLOPTDetection(DetectionEngine):
 
         for box in results.boxes:
             x1, y1, x2, y2 = box.xyxy[0].tolist()
-            cls = int(box.cls[0])
 
-            if cls == 0:  # text
-                text_boxes.append([x1, y1, x2, y2])
+            for cls in box.cls:
+                cls = int(cls)
 
-            elif cls == 1:  # bubble
-                bubble_boxes.append([x1, y1, x2, y2])
+                if cls == 0:  # text
+                    text_boxes.append([x1, y1, x2, y2])
+
+                if cls == 1:  # bubble
+                    bubble_boxes.append([x1, y1, x2, y2])
 
         # 🔥 НИКОГДА None → только numpy
         text_boxes = (
@@ -104,7 +106,6 @@ class YOLOPTDetection(DetectionEngine):
             text_boxes,
             bubble_boxes,
         )
-
 
     def _filter_boxes(self, boxes: np.ndarray, image_shape, max_rel_area=0.4, max_inside=2):
         """
