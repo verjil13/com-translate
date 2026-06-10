@@ -83,7 +83,7 @@ class YOLOPTDetection(DetectionEngine):
             else np.empty((0, 4), dtype=np.float32)
         )
 
-        # 🔥 ФИЛЬТРАЦИЯ
+        #  ФИЛЬТРАЦИЯ
         text_boxes = self._filter_boxes(
             text_boxes,
             image.shape,
@@ -98,7 +98,7 @@ class YOLOPTDetection(DetectionEngine):
             max_inside=10
         )
 
-        # 🔥 очистка кэша после обработки страницы
+        #  очистка кэша после обработки страницы
         self._clear_cache()
 
         return self.create_text_blocks(
@@ -141,11 +141,11 @@ class YOLOPTDetection(DetectionEngine):
             area = w * h
             rel_area = area / img_area
 
-            # ❌ слишком большой бокс
+            #  слишком большой бокс
             if rel_area > max_rel_area:
                 continue
 
-            # ❌ содержит слишком много других
+            #  содержит слишком много других
             inside = 0
             for j, b2 in enumerate(boxes):
                 if i == j:

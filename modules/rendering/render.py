@@ -67,88 +67,6 @@ def is_vertical_block(blk, lang_code: str | None) -> bool:
     """
     return getattr(blk, "direction", "") == "vertical" and is_vertical_language_code(lang_code)
 
-def _split_at_fitting_hyphen(
-    current_line: str,
-    word: str,
-    measure_side,
-    max_side: float,
-) -> Tuple[str, str] | None:
-    """Return the longest hyphen-preserving split that fits, if any."""
-
-    best_split = None
-    for idx, char in enumerate(word):
-        if char != "-" or idx <= 0 or idx >= len(word) - 1:
-            continue
-        prefix = word[: idx + 1]
-        candidate = prefix if not current_line else f"{current_line} {prefix}"
-        if measure_side(candidate) <= max_side:
-            best_split = (prefix, word[idx + 1 :])
-    return best_split
-
-def _wrap_text_greedily(text: str, measure_side, max_side: float) -> str:
-    """Greedy wrapping that only splits inside words at existing hyphens."""
-
-    words = text.split()
-    lines: List[str] = []
-
-    while words:
-        line = ""
-        while words:
-            next_word = words[0]
-            candidate = next_word if not line else f"{line} {next_word}"
-            if measure_side(candidate) <= max_side:
-                line = candidate
-                words.pop(0)
-                continue
-
-            hyphen_split = _split_at_fitting_hyphen(line, next_word, measure_side, max_side)
-            if hyphen_split is not None:
-                prefix, suffix = hyphen_split
-                line = prefix if not line else f"{line} {prefix}"
-                words[0] = suffix
-                break
-
-            if line:
-                break
-
-            line = words.pop(0)
-            break
-
-        lines.append(line)
-
-    return "\n".join(lines)
-
-def _wrap_no_space_text_greedily(text: str, measure_side, max_side: float) -> str:
-    """Greedy wrapping for languages that do not rely on spaces between words."""
-
-    paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    wrapped_paragraphs: List[str] = []
-
-    for paragraph in paragraphs:
-        chars = [char for char in paragraph if char != " "]
-        if not chars:
-            wrapped_paragraphs.append("")
-            continue
-
-        lines: List[str] = []
-        line = ""
-
-        for char in chars:
-            candidate = f"{line}{char}"
-            if not line or measure_side(candidate) <= max_side:
-                line = candidate
-                continue
-
-            lines.append(line)
-            line = char
-
-        if line:
-            lines.append(line)
-
-        wrapped_paragraphs.append("\n".join(lines))
-
-    return "\n".join(wrapped_paragraphs)
-
 def pil_word_wrap(image: Image, tbbox_top_left: Tuple, font_pth: str, text: str, 
                   roi_width, roi_height, align: str, spacing, init_font_size: float, min_font_size: float = 10):
     """Break long text to multiple lines, and reduce point size
@@ -213,7 +131,7 @@ def get_best_render_area(
 ):
     #if inpainted_img is None or inpainted_img.size == 0:
     #    return blk_list
-
+    return
     for blk in blk_list:
         if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:
             continue
@@ -314,10 +232,9 @@ def pyside_word_wrap(
     def split_single_word(word: str, metrics: QFontMetrics) -> List[str]:
         if len(word) <= 6:
             return [word]
-        
+
         best_i = 0
         best_diff = float("inf")
-        
 
         for i in range(1, len(word)):
             left = word[:i]
@@ -366,7 +283,7 @@ def pyside_word_wrap(
             if not current:
                 current = word
                 continue
-            
+
             test = current + " " + word
 
             if flag <3:
@@ -468,13 +385,27 @@ def manual_wrap(
     min_font_size: float = 10
 ):
     target_lang = main_page.lang_mapping.get(main_page.t_combo.currentText(), None)
-    trg_lng_cd = get_language_code(target_lang)                                                                                   
+    trg_lng_cd = get_language_code(target_lang) 
+
     for blk in blk_list:
-        x1, y1, width, height = blk.xywh
+        width_coef = 1
+        height_coef = 1
+
+        if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:        
+            x1, y1, x2, y2 = blk.xyxy
+            width_coef = 1.3
+            height_coef = 1.2
+        else: 
+            x1, y1, x2, y2 = blk.bubble_xyxy
+
+
+        width = abs(x2-x1)
+        height = abs(y2-y1)
+
         translation = blk.translation
         if not translation:
             continue
-            
+
         vertical = is_vertical_block(blk, trg_lng_cd)    
 
         # 1️⃣ Подбираем текст и размер шрифта
@@ -494,7 +425,9 @@ def manual_wrap(
             init_font_size,
             min_font_size,
             vertical,
-            is_no_space_lang(trg_lng_cd)
+            is_no_space_lang(trg_lng_cd),
+            width_coef,
+            height_coef
         )
 
         # 2️⃣ Центрируем bbox блока под размер текста
@@ -508,8 +441,8 @@ def manual_wrap(
         text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
         text_h = metrics.height() * len(text_lines)  # высота всего текста
         # центрирование внутри исходного блока
-        new_x1 = x1 + (width - text_w) // 2
-        new_y1 = y1 + (height - text_h) // 2
+        new_x1 = (x1 + x2 - text_w) // 2
+        new_y1 = (y1 + y2 - text_h) // 2
         new_x2 = new_x1 + text_w
         new_y2 = new_y1 + text_h
         blk.xyxy[:] = [new_x1, new_y1, new_x2, new_y2]

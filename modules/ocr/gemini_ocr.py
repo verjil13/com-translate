@@ -166,7 +166,7 @@ class GeminiOCR(OCREngine):
 
             elapsed = time.time() - start
             if elapsed > 10:
-                print(f"⛔ BLOCK TOO SLOW: {elapsed:.2f}s")
+                print(f"BLOCK TOO SLOW: {elapsed:.2f}s")
 
         return blk_list
 
@@ -216,11 +216,11 @@ class GeminiOCR(OCREngine):
         thread.join(timeout=30)
 
         if thread.is_alive():
-            print("⛔ OCR TIMEOUT (30s)")
+            print("OCR TIMEOUT (30s)")
             return ""
 
         if error[0]:
-            print("⛔ OCR ERROR:", error[0])
+            print("OCR ERROR:", error[0])
             return ""
 
         text = result[0]

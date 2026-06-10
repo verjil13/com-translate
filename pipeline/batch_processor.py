@@ -59,7 +59,7 @@ TRASH_RE = ure.compile(
 
 class BatchProcessor:
     """Handles batch processing of comic translation."""
-    
+
     def __init__(
             self, 
             main_page: ComicTranslate, 
@@ -68,7 +68,7 @@ class BatchProcessor:
             inpainting_handler: InpaintingHandler, 
             ocr_handler: OCRHandler 
         ):
-        
+
         self.main_page = main_page
         self.cache_manager = cache_manager
         # Use shared handlers from the main pipeline
@@ -99,7 +99,6 @@ class BatchProcessor:
         # Deprecated: skip details are captured by batch reporting/UI signals.
         return
 
-
     # --------------------------------------------------
     # Функция для авто-удаления «мусорных» блоков
     # --------------------------------------------------
@@ -110,19 +109,19 @@ class BatchProcessor:
         """
         if blk_list is None:
             blk_list = self.blk_list
-    
+
         new_blk_list = []
         removed_count = 0
-    
+
         for blk in blk_list:
             text = (blk.text or "").strip()
             if not text:
                 removed_count += 1
                 logger.info(f"🗑 Auto-deleted trash block: '{blk.text}'")
                 continue
-    
+
             text = unicodedata.normalize("NFC", text)
-    
+
             # есть хотя бы одна буква → оставляем
             if LETTER_RE.search(text):
                 new_blk_list.append(blk)
@@ -133,7 +132,7 @@ class BatchProcessor:
             else:
                 # неожиданные символы → оставляем
                 new_blk_list.append(blk)
-    
+
         if removed_count:
             logger.info(f"🧹 Trash blocks removed: {removed_count}")
         print("321")
@@ -142,7 +141,6 @@ class BatchProcessor:
     def _is_cancelled(self) -> bool:
         worker = getattr(self.main_page, "current_worker", None)
         return bool(worker and worker.is_cancelled)
-
 
     def batch_process(self, selected_paths: List[str] = None):
         timestamp = datetime.now().strftime("%b-%d-%Y_%I-%M-%S%p")
@@ -170,7 +168,7 @@ class BatchProcessor:
 
             target_lang_en = self.main_page.lang_mapping.get(target_lang, None)
             trg_lng_cd = get_language_code(target_lang_en)
-            
+
             base_name = os.path.splitext(os.path.basename(image_path))[0].strip()
             extension = os.path.splitext(image_path)[1]
             directory = os.path.dirname(image_path)
@@ -203,7 +201,7 @@ class BatchProcessor:
             # Use the shared block detector from the handler
             if self.block_detection.block_detector_cache is None:
                 self.block_detection.block_detector_cache = TextBlockDetector(settings_page)
-            
+
             blk_list = self.block_detection.block_detector_cache.detect(image)
 
             self.emit_progress(index, total_images, 2, 10, False)
@@ -228,7 +226,7 @@ class BatchProcessor:
                     self.main_page.blk_list = blk_list
                 except InsufficientCreditsException:
                     raise
-                    
+
                 except Exception as e:
                     # if it's a connection/network error, give a short message
                     if isinstance(e, requests.exceptions.ConnectionError):
@@ -271,12 +269,12 @@ class BatchProcessor:
             extra_context = settings_page.get_llm_settings()['extra_context']
             translator_key = settings_page.get_tool_selection('translator')
             translator = Translator(self.main_page, source_lang, target_lang)
-            
+
             # Get translation cache key for batch processing
             translation_cache_key = self.cache_manager._get_translation_cache_key(
                 image, source_lang, target_lang, translator_key, extra_context
             )
-            
+
             try:
                 translator.translate(blk_list, image, extra_context)
                 # Cache the translation results for potential future use
@@ -322,7 +320,7 @@ class BatchProcessor:
             try:
                 raw_text_obj = json.loads(entire_raw_text)
                 translated_text_obj = json.loads(entire_translated_text)
-                
+
                 if (not raw_text_obj) or (not translated_text_obj):
                     self.skip_save(directory, timestamp, base_name, extension, archive_bname, image)
                     self.main_page.image_skipped.emit(image_path, "Translator", "")
@@ -369,13 +367,13 @@ class BatchProcessor:
 
             # Clean Image of text
             config = get_config(settings_page)
-            
+
             # Filter blocks to only inpaint if both OCR text and Translation are non-empty
             inpaint_blk_list = [
                 blk for blk in blk_list
                 if blk.text and blk.text.strip() and blk.translation and blk.translation.strip()
             ]
-            
+
             logger.info("pre-inpaint: generating mask (inpaint_blk_list=%d blocks out of %d)", len(inpaint_blk_list), len(blk_list))
             t0 = time.time()
             mask = generate_mask(image, inpaint_blk_list)
@@ -424,38 +422,50 @@ class BatchProcessor:
             alignment_id = render_settings.alignment_id
             alignment = self.main_page.button_to_alignment[alignment_id]
             direction = render_settings.direction
-                
+
             text_items_state = []
             for blk in blk_list:
-                x1, y1, width, height = blk.xywh
+                width_coef = 1
+                height_coef = 1
+
+                if blk.text_class != "text_bubble" or blk.bubble_xyxy is None:        
+                    x1, y1, x2, y2 = blk.xyxy
+                    width_coef = 1.3
+                    height_coef = 1.2
+                else: 
+                    x1, y1, x2, y2 = blk.bubble_xyxy
+
+                width = abs(x2-x1)
+                height = abs(y2-y1)
                 translation = blk.translation
                 if not translation or len(translation) == 0: #1
                     continue
-                
+
                 # Determine if this block should use vertical rendering
                 vertical = is_vertical_block(blk, trg_lng_cd)
 
                 translation, font_size = pyside_word_wrap(
                     blk_list,
-                    translation, 
-                    font, 
-                    width, 
+                    translation,
+                    font,
+                    width,
                     height,
-                    line_spacing, 
-                    outline_width, 
-                    bold, 
-                    italic, 
+                    line_spacing,
+                    outline_width,
+                    bold,
+                    italic,
                     underline,
-                    alignment, 
-                    direction, 
-                    max_font_size, 
+                    alignment,
+                    direction,
+                    max_font_size,
                     min_font_size,
                     vertical,
                     is_no_space_lang(trg_lng_cd),
-                    #return_metrics=True
+                    width_coef,
+                    height_coef
+                    # return_metrics=True
                 )
-                
-                
+
                 ##################
                 # Центрируем bbox блока под размер текста
                 # вычисляем ширину и высоту текста в пикселях
@@ -468,9 +478,9 @@ class BatchProcessor:
                 text_w = max(metrics.horizontalAdvance(line) for line in text_lines)
                 text_h = metrics.height() * len(text_lines)  # высота всего текста
                 # центрирование внутри исходного блока
-                new_x1 = x1 + (width - text_w) // 2
-                new_y1 = y1 + (height - text_h) // 2
-                
+                new_x1 = (x1 + x2 - text_w) // 2
+                new_y1 = (y1 + y2 - text_h) // 2
+
                 x1 = new_x1
                 y1 = new_y1
                 width = text_w            
@@ -481,11 +491,11 @@ class BatchProcessor:
                     new_x1 + text_w,
                     new_y1 + text_h
                 )   
-                #self.main_page.blk_list = blk_list.copy()
+                # self.main_page.blk_list = blk_list.copy()
                 self.main_page.image_states[image_path].update({
                     'blk_list': blk_list    
                 })
-                
+
                 # Display text if on current page
                 if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:                             
                     self.main_page.blk_rendered.emit(translation, font_size, blk, image_path)
@@ -526,11 +536,11 @@ class BatchProcessor:
             self.main_page.image_states[image_path]['viewer_state'].update({
                 'text_items_state': text_items_state
                 })
-            
+
             self.main_page.image_states[image_path]['viewer_state'].update({
                 'push_to_stack': True
                 })
-            
+
             self.emit_progress(index, total_images, 9, 10, False)
             if self._is_cancelled():
                 return
@@ -545,9 +555,8 @@ class BatchProcessor:
             # during processing and misses live blk_rendered events.
             self.main_page.render_state_ready.emit(image_path)
 
-            #if image_path == file_on_display:
+            # if image_path == file_on_display:
             if image_path == self.main_page.image_files[self.main_page.curr_img_idx]:                
                 self.main_page.blk_list = self.main_page.image_states[image_path].get("blk_list", []).copy()
 
             self.emit_progress(index, total_images, 10, 10, False)
-
