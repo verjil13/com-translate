@@ -21,5 +21,6 @@ send2trash>=2.1.0
 pyphen
 ultralytics
 PyJWT>=2.8.0
+spandrel
 
 

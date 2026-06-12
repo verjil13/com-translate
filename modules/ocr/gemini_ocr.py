@@ -15,6 +15,11 @@ import gc
 import torch
 import re
 import math
+from spandrel import ModelLoader, ImageModelDescriptor
+
+
+_MODEL = None
+_DEVICE = None
 
 class GeminiOCR(OCREngine):
     """OCR engine using PaddleOCR-VL GGUF (llama.cpp)"""
@@ -107,7 +112,7 @@ class GeminiOCR(OCREngine):
     def _resize_if_needed(self, img: np.ndarray) -> np.ndarray:
         h, w = img.shape[:2]
 
-        max_area = 320 * 320
+        max_area = 360 * 360
         min_area = 16 * 16
 
         current_area = w * h
@@ -115,8 +120,8 @@ class GeminiOCR(OCREngine):
         # вычисляем scale по площади
         if current_area > max_area:
             scale = math.sqrt(max_area / current_area)
-        elif current_area < min_area:
-            scale = math.sqrt(min_area / current_area)
+        elif current_area < min_area:  # min_area
+            scale = math.sqrt(min_area / current_area)  # min_area
         else:
             scale = 1.0
 
@@ -126,7 +131,8 @@ class GeminiOCR(OCREngine):
         if new_w == w and new_h == h:
             return img
 
-        interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
+        # interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
+        interpolation = cv2.INTER_LANCZOS4
 
         return cv2.resize(
             img,
@@ -156,9 +162,14 @@ class GeminiOCR(OCREngine):
             if x1 >= x2 or y1 >= y2:
                 continue
 
-            cropped = img[y1:y2, x1:x2]
-            # cropped_pil = Image.fromarray(cropped).convert("RGB")
-
+            cropped = img[y1:y2, x1:x2]           
+            #cropped = self.upscale_hat(
+            #    cropped,
+            #    model_path=r"H:\com-translate\models\upscale\2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors",
+            #    scale=2,
+            #)
+            # 4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.safetensors
+            # 2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors
             cropped = self._resize_if_needed(cropped)
 
             start = time.time()
@@ -286,3 +297,107 @@ class GeminiOCR(OCREngine):
                 text = new_text
 
         return text
+
+    def upscale_hat(
+        self,
+        img_bgr: np.ndarray,
+        model_path: str,
+        scale: int = 2,
+        tile: int = 256,
+        overlap: int = 32,
+    ) -> np.ndarray:
+        """
+        One-shot HAT upscaler (Spandrel)
+        model loads only once (cached globally)
+        """
+
+        global _MODEL, _DEVICE       
+
+        # =========================
+        # lazy load model
+        # =========================
+        if _MODEL is None:
+            print("Loading model...")
+
+            _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            model = ModelLoader().load_from_file(model_path)
+            assert isinstance(model, ImageModelDescriptor)
+
+            _MODEL = model.to(_DEVICE)
+            _MODEL.eval()
+
+            print("Using device:", _DEVICE)
+
+        model = _MODEL
+        device = _DEVICE
+
+        # =========================
+        # grid
+        # =========================
+        def build_grid(size, tile, overlap):
+            stride = tile - overlap
+            coords = []
+            pos = 0
+            while True:
+                if pos + tile >= size:
+                    coords.append(max(0, size - tile))
+                    break
+                coords.append(pos)
+                pos += stride
+            return coords
+
+        h, w = img_bgr.shape[:2]
+
+        out_h, out_w = h * scale, w * scale
+
+        output = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
+
+        xs = build_grid(w, tile, overlap)
+        ys = build_grid(h, tile, overlap)
+
+        with torch.no_grad():
+
+            for y in ys:
+                for x in xs:
+
+                    patch = img_bgr[y : y + tile, x : x + tile]
+                    ph, pw = patch.shape[:2]
+
+                    patch = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
+
+                    tensor = (
+                        torch.from_numpy(patch).permute(2, 0, 1).unsqueeze(0).float()
+                        / 255.0
+                    )
+
+                    tensor = tensor.to(device)
+
+                    sr = model(tensor)
+
+                    sr = sr.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                    sr = np.clip(sr, 0, 1)
+
+                    oh = ph * scale
+                    ow = pw * scale
+
+                    sr = sr[:oh, :ow]
+
+                    oy = y * scale
+                    ox = x * scale
+
+                    output[oy : oy + oh, ox : ox + ow] += sr
+                    weight[oy : oy + oh, ox : ox + ow] += 1.0
+
+        output /= np.maximum(weight, 1e-8)
+        output = (output * 255).astype(np.uint8)
+
+        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
+
+        gc.collect()
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return output
