@@ -16,7 +16,7 @@ import torch
 import re
 import math
 from spandrel import ModelLoader, ImageModelDescriptor
-
+from pathlib import Path
 
 _MODEL = None
 _DEVICE = None
@@ -140,6 +140,20 @@ class GeminiOCR(OCREngine):
             interpolation=interpolation,
         )
 
+    def _cropped(self, img: np.ndarray) -> np.ndarray:
+        h, w = img.shape[:2]
+
+        new_w = max(1, int(w * 2))
+        new_h = max(1, int(h * 2))
+
+        interpolation = cv2.INTER_LANCZOS4
+
+        return cv2.resize(
+            img,
+            (new_w, new_h),
+            interpolation=interpolation,
+        )
+
     # -------------------------
     # BLOCK PROCESSING
     # -------------------------
@@ -162,18 +176,29 @@ class GeminiOCR(OCREngine):
             if x1 >= x2 or y1 >= y2:
                 continue
 
-            cropped = img[y1:y2, x1:x2]           
-            #cropped = self.upscale_hat(
+            image = img[y1:y2, x1:x2] 
+            # image = self._cropped(image)
+            # cropped = self.upscale_hat(
             #    cropped,
             #    model_path=r"H:\com-translate\models\upscale\2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors",
             #    scale=2,
-            #)
+            # )
             # 4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.safetensors
             # 2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors
-            cropped = self._resize_if_needed(cropped)
+
+            # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            # image = cv2.GaussianBlur(image, (5, 5), 0)
+            # image = cv2.medianBlur(image, 3)
+            # image = cv2.threshold(image,0, 255,cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            image = self._resize_if_needed(image)
+
+            # OUTPUT_DIR = Path(r"G:\Torrent\Manga\test\out")
+            # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            # filename = f"{time.time_ns()}.png"
+            # cv2.imwrite(str(OUTPUT_DIR / filename), image)
 
             start = time.time()
-            blk.text = self._get_ocr(cropped)
+            blk.text = self._get_ocr(image)
 
             elapsed = time.time() - start
             if elapsed > 10:
@@ -311,7 +336,7 @@ class GeminiOCR(OCREngine):
         model loads only once (cached globally)
         """
 
-        global _MODEL, _DEVICE       
+        global _MODEL, _DEVICE
 
         # =========================
         # lazy load model
