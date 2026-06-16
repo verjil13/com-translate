@@ -17,7 +17,7 @@ class YOLOPTDetection(DetectionEngine):
 
         from ultralytics import YOLO
 
-        model_path = r"models\detection\best_12m_v4.pt"
+        model_path = r"models\detection\yolo12m_v4.pt"
         self.model = YOLO(model_path)
 
         # совместимость
