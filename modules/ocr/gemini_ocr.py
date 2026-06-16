@@ -186,10 +186,15 @@ class GeminiOCR(OCREngine):
             # 4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.safetensors
             # 2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors
 
-            # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             # image = cv2.GaussianBlur(image, (5, 5), 0)
             # image = cv2.medianBlur(image, 3)
             # image = cv2.threshold(image,0, 255,cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            ###
+            image = image.copy()
+            image[image < 30] = 0
+            image[image > 225] = 255
+            ###
             image = self._resize_if_needed(image)
 
             # OUTPUT_DIR = Path(r"G:\Torrent\Manga\test\out")
