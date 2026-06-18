@@ -13,6 +13,9 @@ from modules.utils.pipeline_config import inpaint_map, get_config, get_inpainter
 from modules.utils.textblock import adjust_text_line_coordinates
 from pipeline.inpainting_boxes import merge_overlapping_padded_boxes
 from pipeline.webtoon_utils import filter_and_convert_visible_blocks, restore_original_block_coordinates
+import cv2
+from pathlib import Path
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -517,8 +520,9 @@ class InpaintingHandler:
             return False, color_reason
 
         fill_region = self._get_associated_residual_components(residual_crop, masked_region)
-        
-        if getattr(block, "text_class", None) == "text_bubble" and getattr(block, "bubble_xyxy", None) is not None:
+
+        bubble_mask = None
+        if (getattr(block, "text_class", None) == "text_bubble" and getattr(block, "bubble_xyxy", None) is not None):
             bubble_mask = build_bubble_clip_mask(
                 fill_region.shape[:2],
                 bounds,
@@ -527,27 +531,44 @@ class InpaintingHandler:
                 image=cleaned_image,
                 seed_bbox=block.xyxy,
             )
-            if bubble_mask is not None:
-                num_labels, labeled_fill = imk.connected_components(fill_region, connectivity=4)
-                overlapping_labels = np.unique(labeled_fill[bubble_mask])
-                keep_labels = overlapping_labels[overlapping_labels > 0]
-                if keep_labels.size > 0:
-                    fill_region = np.isin(labeled_fill, keep_labels)
-                else:
-                    fill_region = np.zeros_like(fill_region)
-        else:
-            bubble_mask = None
 
-        soft_mask = imk.gaussian_blur(fill_region.astype(np.uint8) * 255, 1.0).astype(np.float32) / 255.0
-        soft_mask = np.clip(soft_mask, 0.0, 1.0)[..., np.newaxis]
-        
+            if bubble_mask is not None:
+                num_labels, labeled = imk.connected_components(fill_region, connectivity=4)
+
+                overlapping_labels = np.unique(labeled[bubble_mask])
+                keep_labels = overlapping_labels[overlapping_labels > 0]
+
+                if keep_labels.size > 0:
+                    fill_region = np.isin(labeled, keep_labels)
+                else:
+                    fill_region = np.zeros_like(fill_region, dtype=bool)
+
+        final_fill = fill_region.astype(bool)
+
         if bubble_mask is not None:
-            soft_mask = soft_mask * bubble_mask[..., np.newaxis]
+            final_fill &= bubble_mask.astype(bool)
+
+        soft_mask = (
+            imk.gaussian_blur(
+                final_fill.astype(np.uint8) * 255,
+                1.0,
+            ).astype(np.float32)
+            / 255.0
+        )
+
+        soft_mask = np.clip(soft_mask, 0.0, 1.0)[..., np.newaxis]
+
+        if bubble_mask is not None:
+            soft_mask *= bubble_mask[..., np.newaxis]
+
         crop_f = crop.astype(np.float32)
         fill_rgb = np.broadcast_to(fill_color, crop.shape).astype(np.float32)
+
         blended = crop_f * (1.0 - soft_mask) + fill_rgb * soft_mask
-        cleaned_image[y1:y2, x1:x2] = np.clip(np.round(blended), 0, 255).astype(np.uint8)
-        residual_crop[fill_region] = 0
+        cleaned_image[y1:y2, x1:x2] = np.clip(np.rint(blended), 0, 255).astype(np.uint8)
+
+        residual_crop[final_fill] = 0
+
         return True, color_reason
 
     def _get_associated_residual_components(self, residual_crop: np.ndarray, masked_region: np.ndarray) -> np.ndarray:

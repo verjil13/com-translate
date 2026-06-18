@@ -304,7 +304,7 @@ def build_block_mask_data(
 
     kernel_size = default_padding
     dilate_iterations = 3
-
+    """
     if clip_to_bubble and getattr(blk, "text_class", None) == "text_bubble" and getattr(blk, "bubble_xyxy", None) is not None:
         inset = max(1, kernel_size)
         dilated_crop_mask = clip_mask_components_to_bubble(
@@ -320,7 +320,9 @@ def build_block_mask_data(
     else:
         dil_kernel = np.ones((kernel_size, kernel_size), np.uint8)
         dilated_crop_mask = imk.dilate(crop_mask, dil_kernel, iterations=dilate_iterations)
-
+    """
+    dil_kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    dilated_crop_mask = imk.dilate(crop_mask, dil_kernel, iterations=dilate_iterations)
     return dilated_crop_mask, (cx1, cy1, cx2, cy2)
 
 

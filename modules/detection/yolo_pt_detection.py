@@ -39,7 +39,7 @@ class YOLOPTDetection(DetectionEngine):
     def detect(self, image: np.ndarray):
         results = self.model(
             image,
-            conf=0.1,  # ниже → ловит больше текста
+            conf=0.2,  # ниже → ловит больше текста
             iou=0.25,  # аккуратнее с перекрытиями
             imgsz=768,#1024, 896    # важно для мелкого текста
             max_det=200,

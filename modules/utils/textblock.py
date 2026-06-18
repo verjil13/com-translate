@@ -259,8 +259,8 @@ def adjust_text_line_coordinates(coords, width_expansion_percentage: int, height
     # Calculate width, height, and respective expansion offsets
     width = bottom_right_x - top_left_x
     height = bottom_right_y - top_left_y
-    width_expansion_offset = int(((width * width_expansion_percentage) / 100) / 2)
-    height_expansion_offset = int(((height * height_expansion_percentage) / 100) / 2)
+    width_expansion_offset = -2 # int(((width * width_expansion_percentage) / 100) / 2)
+    height_expansion_offset = -2 #int(((height * height_expansion_percentage) / 100) / 2)
 
     # Define the rectangle origin points (bottom left, top right) with expansion/contraction
     new_x1 = max(top_left_x - width_expansion_offset, 0)

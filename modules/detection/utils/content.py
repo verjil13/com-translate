@@ -6,7 +6,9 @@ import mahotas
 from typing import Optional, Union
 import imkit as imk
 from modules.utils.textblock import adjust_text_line_coordinates
-
+import cv2
+from pathlib import Path
+import time
 
 def filter_and_fix_bboxes(
     bboxes: Union[list, np.ndarray], 
@@ -174,7 +176,10 @@ def detect_content_in_bbox(
 
     gray = imk.to_gray(image)
     threshold = mahotas.thresholding.otsu(gray)
-    
+    #gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    #gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    #threshold =cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
     binary_black_text = (gray < threshold).astype(np.uint8)
     binary_white_text = (gray > threshold).astype(np.uint8)
     if not np.any(binary_black_text):
@@ -214,6 +219,12 @@ def detect_content_mask_in_bbox(
 
     gray = imk.to_gray(image)
     threshold = mahotas.thresholding.otsu(gray)
+    #gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    #gray = gray.copy()
+    #gray[gray < 30] = 0
+    #gray[gray > 225] = 255
+    #gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    #threshold = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
     binary_black_text = (gray < threshold).astype(np.uint8)
     binary_white_text = (gray > threshold).astype(np.uint8)
