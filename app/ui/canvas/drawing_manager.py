@@ -417,6 +417,7 @@ class DrawingManager:
                 cx1, cy1, cx2, cy2 = adjust_text_line_coordinates(crop_bbox, 10, 10, image)
                 crop = image[cy1:cy2, cx1:cx2]
                 
+                crop_mask = detect_content_mask_in_bbox(crop)
                 if crop_mask is not None and np.any(crop_mask):
                     close_kernel = imk.get_structuring_element(imk.MORPH_RECT, (3, 3))
                     crop_mask = imk.morphology_ex(crop_mask, imk.MORPH_CLOSE, close_kernel)

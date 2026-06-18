@@ -522,6 +522,7 @@ class InpaintingHandler:
         fill_region = self._get_associated_residual_components(residual_crop, masked_region)
 
         bubble_mask = None
+        """"
         if (getattr(block, "text_class", None) == "text_bubble" and getattr(block, "bubble_xyxy", None) is not None):
             bubble_mask = build_bubble_clip_mask(
                 fill_region.shape[:2],
@@ -542,7 +543,7 @@ class InpaintingHandler:
                     fill_region = np.isin(labeled, keep_labels)
                 else:
                     fill_region = np.zeros_like(fill_region, dtype=bool)
-
+        """
         final_fill = fill_region.astype(bool)
 
         if bubble_mask is not None:
