@@ -32,7 +32,7 @@ from modules.utils.textblock import sort_blk_list
 from modules.utils.pipeline_config import get_config
 from modules.utils.image_utils import generate_mask, get_smart_text_color
 from modules.utils.language_utils import get_language_code, is_no_space_lang
-from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations
+from modules.utils.translator_utils import get_raw_translation, get_raw_text, format_translations, is_renderable_translation
 from modules.rendering.render import get_best_render_area, pyside_word_wrap, is_vertical_block
 from modules.utils.device import resolve_device
 from modules.utils.exceptions import InsufficientCreditsException
@@ -166,9 +166,8 @@ class BatchProcessor:
             source_lang = self.main_page.image_states[image_path]['source_lang']
             target_lang = self.main_page.image_states[image_path]['target_lang']
 
-            target_lang_en = self.main_page.lang_mapping.get(target_lang, None)
-            trg_lng_cd = get_language_code(target_lang_en)
-
+            trg_lng_cd = get_language_code(target_lang)
+            
             base_name = os.path.splitext(os.path.basename(image_path))[0].strip()
             extension = os.path.splitext(image_path)[1]
             directory = os.path.dirname(image_path)
@@ -208,6 +207,8 @@ class BatchProcessor:
             if self._is_cancelled():
                 return
 
+            self.block_detection.annotate_language_if_auto(image, blk_list, source_lang)
+
             if blk_list:
                 # OCR и сортировка блоков
                 ocr_model = settings_page.get_tool_selection('ocr')
@@ -218,8 +219,7 @@ class BatchProcessor:
                 try:
                     self.ocr_handler.ocr.process(image, blk_list)
                     self.cache_manager._cache_ocr_results(cache_key, self.main_page.blk_list)
-                    source_lang_english = self.main_page.lang_mapping.get(source_lang, source_lang)
-                    rtl = True if source_lang_english == 'Japanese' else False
+                    rtl = True if source_lang == 'Japanese' else False
                     blk_list = sort_blk_list(blk_list, rtl)
                     # >>> ВАЖНО: удаляем мусорные блоки после OCR
                     blk_list = self.auto_delete_trash_blocks(blk_list)
@@ -369,9 +369,12 @@ class BatchProcessor:
             config = get_config(settings_page)
 
             # Filter blocks to only inpaint if both OCR text and Translation are non-empty
+            # and the translation will actually be rendered (single-character translations
+            # like an echoed "?" are skipped at render time).
             inpaint_blk_list = [
                 blk for blk in blk_list
                 if blk.text and blk.text.strip() and blk.translation and blk.translation.strip()
+                and is_renderable_translation(blk.translation)
             ]
 
             logger.info("pre-inpaint: generating mask (inpaint_blk_list=%d blocks out of %d)", len(inpaint_blk_list), len(blk_list))
@@ -438,7 +441,7 @@ class BatchProcessor:
                 width = abs(x2-x1)
                 height = abs(y2-y1)
                 translation = blk.translation
-                if not translation or len(translation) == 0: #1
+                if not is_renderable_translation(translation):
                     continue
 
                 # Determine if this block should use vertical rendering

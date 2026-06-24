@@ -32,3 +32,5 @@ benchmarks/
 *.gz
 !env.lock/
 !env.lock/*.txt
+
+scripts
