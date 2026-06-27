@@ -131,15 +131,6 @@ class LLMTranslation(TranslationEngine):
         - Strictly adhere to the order of blocks when translating.
         - Each key represents a fixed dialogue position.        
         - DO NOT change, add, remove, rename, or reorder keys.
-        - Return ALL keys exactly as provided.         
-        For each block:
-            - If it is already in {target_lang} or looks like gibberish, OUTPUT IT AS IT IS.
-            - DO NOT provide explanations.
-            - DO NOT combine text from different blocks, even if it is the same sentence in meaning.
-            - DO NOT swap the text from different blocks. 
-            - Translate each block in order.
-        If the string contains untranslatable characters, it is garbage for text recognition or unknown characters:
-        - Leave these symbols UNCHANGED. 
-
+        - Return ALL keys exactly as provided.  
         Do your best! I'm really counting on you
         """
