@@ -57,10 +57,12 @@ class MicrosoftOCR(OCREngine):
             model_path=MODEL_PATH,
             chat_handler=PaddleOCRChatHandler(
                 clip_model_path=MMPROJ_PATH,
+                verbose=False,
             ),
             n_gpu_layers=-1,
             n_ctx=1280,
             n_batch=256,
+            verbose=False,
         )
 
     def unload_model(self):

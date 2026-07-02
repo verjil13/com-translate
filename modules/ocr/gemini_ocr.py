@@ -61,11 +61,13 @@ class GeminiOCR(OCREngine):
         self.llm = Llama(
             model_path=MODEL_PATH,
             chat_handler=PaddleOCRChatHandler(
-                clip_model_path=MMPROJ_PATH,
+                clip_model_path=MMPROJ_PATH, 
+                verbose=False,
             ),
             n_gpu_layers=-1,
-            n_ctx=1280, #1536
+            n_ctx=1280,  # 1536
             n_batch=256,
+            verbose=False,
         )
 
     # -------------------------
