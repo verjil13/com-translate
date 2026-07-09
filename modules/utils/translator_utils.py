@@ -134,7 +134,7 @@ def get_raw_text(blk_list: list[TextBlock]):
         text = normalize_repeating_chars_advanced(text)  # исправлено
         rw_txts_dict[block_key] = text
 
-    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)
+    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)    
     print(raw_texts_json)
     return raw_texts_json
 
@@ -145,7 +145,7 @@ def post_process_translation(text: str) -> str:
 
     # 0) Удаляем шум в начале строки
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–『]+',
         '',
         text
     )
@@ -264,6 +264,16 @@ def fix_llm_json_structure(s: str) -> str:
         s
     )
 
+    s = (
+        s.replace("«", '"')
+        .replace("»", '"')
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("„", '"')
+    )
+
+    s = s.replace('""', '"')
+
     # --- 13. Финальная проверка парности кавычек ---
     quote_count = s.count('"')
     if quote_count % 2 != 0:
@@ -287,17 +297,13 @@ def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
             raw_json = match.group(0)
         else:
             raise json.JSONDecodeError("No JSON object", json_string, 0)
-
         print(raw_json)
         raw_json = fix_llm_json_structure(raw_json) #проверка структуры
-        #print(raw_json)
         translation_dict = json.loads(raw_json)
-        #print(translation_dict)
-        
         for idx, blk in enumerate(blk_list):
             key = f"block_{idx}"
             if key in translation_dict:
-                blk.translation = translation_dict[key]
+                blk.translation = translation_dict[key]                
             else:
                 print(f"Warning: {key} not found in JSON.")
         return
@@ -305,8 +311,8 @@ def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
     except json.JSONDecodeError:
         pass
 
-    translations = extract_translations_from_llm(json_string)   
-    
+    translations = extract_translations_from_llm(raw_json)
+
     if not translations:
         print("❌ Failed to extract any translations from LLM response.")
         return
