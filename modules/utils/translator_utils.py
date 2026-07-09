@@ -272,7 +272,7 @@ def fix_llm_json_structure(s: str) -> str:
         .replace("„", '"')
     )
 
-    s = s.replace('""', '"')
+    #s = s.replace('""', '"')
 
     # --- 13. Финальная проверка парности кавычек ---
     quote_count = s.count('"')
@@ -284,6 +284,81 @@ def fix_llm_json_structure(s: str) -> str:
             s += '"'
 
     return s
+
+
+def fix_llm_quotes(s: str) -> str:
+    result = []
+    pos = 0
+    length = len(s)
+
+    while pos < length:
+        # ищем следующий block
+        block_start = s.find('"block_', pos)
+
+        if block_start == -1:
+            result.append(s[pos:])
+            break
+
+        # копируем всё до block без изменений
+        result.append(s[pos:block_start])
+
+        # ищем конец имени ключа: " после block_n
+        key_end = s.find('"', block_start + 7)
+        if key_end == -1:
+            result.append(s[block_start:])
+            break
+
+        # ищем начало значения: следующая "
+        value_start = s.find('"', key_end + 1)
+        if value_start == -1:
+            result.append(s[block_start:])
+            break
+
+        # копируем `"block_n": "`
+        result.append(s[block_start : value_start + 1])
+
+        # обрабатываем текст блока
+        i = value_start + 1
+        inner_quotes_open = False
+
+        while i < length:
+            # конец блока: следующая кавычка перед , или } и дальше block
+            if s[i] == '"':
+                # считаем длину группы кавычек
+                j = i
+                while j < length and s[j] == '"':
+                    j += 1
+
+                # проверяем, является ли это закрытием JSON-строки
+                after = s[j:].lstrip()
+
+                # конец значения:
+                #   ",
+                #   "}
+                #   или начало следующего блока
+                if (
+                    after.startswith(",")
+                    or after.startswith("}")
+                    or after.startswith('"block_')
+                ):
+                    result.append('"')
+                    pos = j
+                    break
+
+                # это внутренняя кавычка
+                result.append("«" if not inner_quotes_open else "»")
+                inner_quotes_open = not inner_quotes_open
+
+                i = j
+            else:
+                result.append(s[i])
+                i += 1
+        else:
+            # если строка закончилась внутри блока
+            pos = i
+            break
+
+    return ".join(result)
 
 
 def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
@@ -298,7 +373,8 @@ def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
         else:
             raise json.JSONDecodeError("No JSON object", json_string, 0)
         print(raw_json)
-        raw_json = fix_llm_json_structure(raw_json) #проверка структуры
+        raw_json = fix_llm_json_structure(raw_json) #проверка структуры        
+        raw_json = fix_llm_quotes(raw_json)  # fix ""
         translation_dict = json.loads(raw_json)
         for idx, blk in enumerate(blk_list):
             key = f"block_{idx}"
