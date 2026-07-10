@@ -134,7 +134,9 @@ def get_raw_text(blk_list: list[TextBlock]):
         text = normalize_repeating_chars_advanced(text)  # исправлено
         rw_txts_dict[block_key] = text
 
-    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)    
+    raw_texts_json = json.dumps(rw_txts_dict, ensure_ascii=False, indent=4)  
+    raw_texts_json = raw_texts_json.replace("『", "").replace("』", "").replace("「", "").replace("」", "")
+    print("raw_texts_json")
     print(raw_texts_json)
     return raw_texts_json
 
@@ -145,7 +147,7 @@ def post_process_translation(text: str) -> str:
 
     # 0) Удаляем шум в начале строки
     text = re.sub(
-        r'^[\s!！?？\.．…‥・,，。`~\-—–『]+',
+        r'^[\s!！?？\.．…‥・,，。`~\-—–]+',
         '',
         text
     )
@@ -358,7 +360,7 @@ def fix_llm_quotes(s: str) -> str:
             pos = i
             break
 
-    return ".join(result)
+    return "".join(result)
 
 
 def set_texts_from_json(blk_list: list[TextBlock], json_string: str):
