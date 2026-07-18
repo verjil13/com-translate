@@ -40,7 +40,7 @@ class BaseLLMTranslation(LLMTranslation):
         self.img_as_llm_input = llm_settings.get('image_input_enabled', True)
         self.temperature = 1.0
         self.top_p = 0.95
-        self.max_tokens = 2000 #5000
+        self.max_tokens = 3000 #5000
         
     def translate(self, blk_list: list[TextBlock], image: np.ndarray, extra_context: str) -> list[TextBlock]:
         """

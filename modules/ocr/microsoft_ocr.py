@@ -238,7 +238,7 @@ class MicrosoftOCR(OCREngine):
                         }
                     ],
                     temperature=0,
-                    max_tokens=1024,
+                    max_tokens=1536,
                 )
 
                 result[0] = response["choices"][0]["message"]["content"].strip()
