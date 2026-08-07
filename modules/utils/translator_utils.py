@@ -289,55 +289,53 @@ def fix_llm_json_structure(s: str) -> str:
 
 
 def fix_block_inner_quotes(text: str) -> str:
-    block_pattern = re.compile(r'"block_\d+"\s*:')
-    blocks = list(block_pattern.finditer(text))
+    block_pattern = re.compile(r'"block_\d+"\s*:\s*"')
 
-    if not blocks:
-        return text
-
-    result = []
     pos = 0
+    result = []
 
-    for i, block in enumerate(blocks):
-        result.append(text[pos : block.end()])
+    while True:
+        m = block_pattern.search(text, pos)
+        if not m:
+            result.append(text[pos:])
+            break
 
-        # начало значения
-        start = text.find('"', block.end())
-        if start == -1:
-            pos = block.end()
-            continue
+        # Всё до начала значения оставляем как есть
+        result.append(text[pos : m.end()])
 
-        result.append('"')
+        i = m.end()
+        value = []
 
-        # конец блока — начало следующего block_
-        end = blocks[i + 1].start() if i + 1 < len(blocks) else len(text)
+        escaped = False
+        while i < len(text):
+            c = text[i]
 
-        value = text[start + 1 : end]
+            if escaped:
+                value.append(c)
+                escaped = False
 
-        # удаляем пробелы и запятую после закрывающей кавычки
-        value = value.strip()
+            elif c == "\\":
+                value.append(c)
+                escaped = True
 
-        if value.endswith(","):
-            value = value[:-1].rstrip()
+            elif c == '"':
+                # Это закрывающая кавычка значения
+                break
 
-        # убираем закрывающую кавычку JSON
-        if value.endswith('"'):
-            value = value[:-1]
+            else:
+                value.append(c)
 
-        # внутренние кавычки заменяем
-        value = (
-            value.replace('"', "*")
-            .replace("'", "*")
-            .replace("«", "*")
-            .replace("»", "*")
-        )
+            i += 1
 
-        result.append(value)
-        result.append('"')
+        s = "".join(value)
 
-        pos = end
+        # Меняем только внутренние кавычки
+        s = s.replace('"', "*").replace("'", "*").replace("«", "*").replace("»", "*")
 
-    result.append(text[pos:])
+        result.append(s)
+        result.append('"')  # возвращаем закрывающую кавычку JSON
+
+        pos = i + 1
 
     return "".join(result)
 
