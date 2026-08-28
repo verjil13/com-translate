@@ -2,6 +2,7 @@ from typing import Any
 import numpy as np
 import requests
 import json
+import time
 
 from .base import BaseLLMTranslation
 from ...utils.translator_utils import MODEL_MAP
@@ -94,26 +95,54 @@ class GPTTranslation(BaseLLMTranslation):
         """
         Make API request and process response
         """
-        try:
-            response = requests.post(
-                f"{self.api_base_url}/chat/completions",
-                headers=headers,
-                data=json.dumps(payload),
+        max_retries = 3
 
-                timeout=self.timeout #90
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    f"{self.api_base_url}/chat/completions",
+                    headers=headers,
+                    data=json.dumps(payload),
 
-            )
-            
-            response.raise_for_status()
-            response_data = response.json()
-            
-            return response_data["choices"][0]["message"]["content"]
-        except requests.exceptions.RequestException as e:
-            error_msg = f"API request failed: {str(e)}"
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    error_details = e.response.json()
-                    error_msg += f" - {json.dumps(error_details)}"
-                except:
-                    error_msg += f" - Status code: {e.response.status_code}"
-            raise RuntimeError(error_msg)
+                    timeout=self.timeout #90
+
+                )
+                
+                response.raise_for_status()
+                response_data = response.json()
+                
+                return response_data["choices"][0]["message"]["content"]
+
+            except requests.exceptions.RequestException as e:
+                error_msg = f"API request failed: {str(e)}"
+
+                error_details = None
+                retry = False
+
+                if hasattr(e, 'response') and e.response is not None:
+                    try:
+                        error_details_json = e.response.json()
+                        error_details = json.dumps(error_details_json)
+
+                        # Повторяем запрос при временных ошибках LM Studio
+                        error_text = error_details_json.get("error", "")
+
+                        if (
+                            error_text == "terminated"
+                            or "predict request failed: fetch failed" in error_text
+                        ):
+                            retry = True
+
+                    except:
+                        error_details = f"Status code: {e.response.status_code}"
+
+                if error_details:
+                    error_msg += f" - {error_details}"
+
+                # Повторяем запрос при временной ошибке LM Studio
+                if retry and attempt < max_retries - 1:
+                    time.sleep(attempt + 1)
+                    continue
+
+                raise RuntimeError(error_msg)
+
