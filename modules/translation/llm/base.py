@@ -20,7 +20,6 @@ class BaseLLMTranslation(LLMTranslation):
         self.model = None
         self.img_as_llm_input = False
         self.temperature = None
-        self.top_p = None
         self.max_tokens = None
         self.timeout = 30  
     

@@ -26,7 +26,7 @@ class ToolsPage(QtWidgets.QWidget):
 
         translator_widget, self.translator_combo = create_title_and_combo(self.tr("Translator"), self.translators, h4=True)
         set_combo_box_width(self.translator_combo, self.translators)
-
+        
         ocr_widget, self.ocr_combo = create_title_and_combo(self.tr("Text Recognition"), self.ocr_engines, h4=True)
         set_combo_box_width(self.ocr_combo, self.ocr_engines)
 
@@ -100,11 +100,9 @@ class ToolsPage(QtWidgets.QWidget):
         self.crop_widget.hide()
         self.inpaint_strategy_combo.currentIndexChanged.connect(self._update_hd_strategy_widgets)
 
-
         self.use_gpu_checkbox = MCheckBox(self.tr("Use GPU"))
         if not is_gpu_available():
             self.use_gpu_checkbox.setVisible(False)
-
 
         layout.addWidget(translator_widget)
         layout.addSpacing(10)

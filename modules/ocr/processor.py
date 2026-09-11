@@ -23,13 +23,13 @@ class OCRProcessor:
     Uses a factory pattern to create and utilize the appropriate OCR engine
     based on settings and language.
     """
-    
+
     def __init__(self):
         self.main_page = None
         self.settings = None
         self.source_lang = None
         self.source_lang_english = None
-        
+
     def initialize(self, main_page: Any, source_lang: str) -> None:
         """
         Initialize the OCR processor with settings and language.
@@ -43,7 +43,7 @@ class OCRProcessor:
         self.source_lang = source_lang
         self.source_lang_english = self._get_english_lang(source_lang)
         self.ocr_key = self._get_ocr_key(self.settings.get_tool_selection('ocr'))
-        
+
     def _get_english_lang(self, translated_lang: str) -> str:
         return self.main_page.lang_mapping.get(translated_lang, translated_lang)
 
@@ -126,10 +126,10 @@ class OCRProcessor:
 
     def _get_ocr_key(self, localized_ocr: str) -> str:
         translator_map = {
-            self.settings.ui.tr('GPT-4.1-mini'): 'GPT-4.1-mini',
-            self.settings.ui.tr('Microsoft OCR'): 'Microsoft OCR',
-            self.settings.ui.tr('Google Cloud Vision'): 'Google Cloud Vision',
-            self.settings.ui.tr('Gemini-2.5-Flash-Lite'): 'Gemini-2.5-Flash-Lite',
-            self.settings.ui.tr('Default'): 'Default',
+            self.settings.ui.tr("GPT-4.1-mini"): "GPT-4.1-mini",
+            self.settings.ui.tr("PaddleVL-1.5-OCR"): "PaddleVL-1.5-OCR",
+            self.settings.ui.tr("Google Cloud Vision"): "Google Cloud Vision",
+            self.settings.ui.tr("PaddleVL-Manga"): "PaddleVL-Manga",
+            self.settings.ui.tr("Default"): "Default",
         }
         return translator_map.get(localized_ocr, localized_ocr)

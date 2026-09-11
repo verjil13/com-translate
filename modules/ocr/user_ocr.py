@@ -26,7 +26,7 @@ class UserOCR(OCREngine):
     utilizing the user's account credits and server-side OCR engines.
     """
     LLM_OCR_KEYS = {"Gemini-2.5-Flash-Lite"} 
-    FULL_PAGE_OCR_KEYS = {"Microsoft OCR"}
+    FULL_PAGE_OCR_KEYS = {"PaddleVL-Manga"}
 
     def __init__(self, api_url: str = WEB_API_OCR_URL):
         """
@@ -65,7 +65,6 @@ class UserOCR(OCREngine):
         if not self.is_llm_type and not self.is_full_page_type:
             # This shouldn't happen if the factory logic is correct, but good practice
             logger.error(f"UserOCR initialized with an unsupported key: {self.ocr_key}. Factory should prevent this.")
-
 
     def process_image(self, img: np.ndarray, blk_list: List[TextBlock]) -> List[TextBlock]:
         """
@@ -116,7 +115,7 @@ class UserOCR(OCREngine):
             if not self.auth_client.validate_token():
                 logger.error("Access token invalid and refresh failed.")
                 return None
-            
+
             token = get_token("access_token")
             if not token:
                 logger.warning("Access token not found.")
@@ -131,7 +130,7 @@ class UserOCR(OCREngine):
         if not self.settings:
             logger.warning("Settings object not available in UserOCR, cannot get LLM options.")
             return None
-        
+
         # Adapt this based on your actual settings structure
         llm_settings = self.settings.get_llm_settings() # Assuming this method exists
         options = {
@@ -158,7 +157,7 @@ class UserOCR(OCREngine):
         # 1. Prepare Validation & Coordinates
         valid_indices = []
         coordinates = []
-        
+
         h, w = img.shape[:2]
 
         for i, blk in enumerate(blk_list):
@@ -221,7 +220,7 @@ class UserOCR(OCREngine):
                 error_data = response.json()
                 detail = error_data.get('detail')
                 description = ""
-                
+
                 # detail can be a string, a dict, or a list (validation errors)
                 if isinstance(detail, dict):
                     description = detail.get('error_description') or detail.get('message')
@@ -243,7 +242,7 @@ class UserOCR(OCREngine):
                         raise InsufficientCreditsException(description)
                     # Implicit fallback for 402
                     raise InsufficientCreditsException(description)
-                        
+
                 # Check for Content Flagged errors (400)
                 if response.status_code == 400:
                     is_flagged = False
@@ -251,7 +250,7 @@ class UserOCR(OCREngine):
                         is_flagged = True
                     elif "flagged as unsafe" in str(description).lower() or "blocked by" in str(description).lower():
                         is_flagged = True
-                    
+
                     if is_flagged:
                         raise ContentFlaggedException(description, context="OCR")
 
@@ -341,7 +340,7 @@ class UserOCR(OCREngine):
                 if isinstance(detail, dict):
                     description = detail.get('error_description') or detail.get('message')
                     if not description and detail.get('type'):
-                         description = f"Error type: {detail.get('type')}"
+                        description = f"Error type: {detail.get('type')}"
                 elif isinstance(detail, list):
                     # Pydantic validation errors
                     msgs = []
@@ -358,7 +357,7 @@ class UserOCR(OCREngine):
                         raise InsufficientCreditsException(description)
                     # Implicit fallback for 402
                     raise InsufficientCreditsException(description)
-                        
+
                 # Check for Content Flagged errors (400)
                 if response.status_code == 400:
                     is_flagged = False
@@ -366,13 +365,13 @@ class UserOCR(OCREngine):
                         is_flagged = True
                     elif "flagged as unsafe" in str(description).lower() or "blocked by" in str(description).lower():
                         is_flagged = True
-                    
+
                     if is_flagged:
                         raise ContentFlaggedException(description, context="OCR")
-                        
+
                 # For other errors (400, 500 etc), raise a clear exception with the server message
                 if description:
-                     raise Exception(f"Server Error ({response.status_code}): {description}") from e
+                    raise Exception(f"Server Error ({response.status_code}): {description}") from e
 
             except ValueError:
                 # JSON parsing failed, just raise the original error
@@ -424,7 +423,7 @@ class UserOCR(OCREngine):
             return updated_blk_list
 
         return blk_list 
-    
+
     def update_credits(self, credits: Optional[Any]) -> None:
         if credits is None:
             return

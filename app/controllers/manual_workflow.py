@@ -263,7 +263,7 @@ class ManualWorkflowController:
         
         if removed_count:
             logger.info(f"🧹 Trash blocks removed: {removed_count}")
-        print("123")
+        
         return new_blk_list    
 
     def finish_ocr_translate(self, single_block: bool = False) -> None:
@@ -458,7 +458,9 @@ class ManualWorkflowController:
             )
             return
 
-        target_lang = self.main.t_combo.currentText()
+        target_lang = to_canonical_language_name(
+            self.main.t_combo.currentText(), self.main.lang_mapping
+        )
         if not is_there_text(self.main.blk_list) or not validate_translator(
             self.main, target_lang
         ):

@@ -8,7 +8,7 @@ from .microsoft_ocr import MicrosoftOCR
 from .google_ocr import GoogleOCR
 from .gpt_ocr import GPTOCR
 from .ppocr import PPOCRv5Engine
-#from .manga_ocr.mobile import MangaOCRMobileONNXEngine
+# from .manga_ocr.mobile import MangaOCRMobileONNXEngine
 from .manga_ocr.onnx_engine import MangaOCREngineONNX
 from .pororo.onnx_engine import PororoOCREngineONNX  
 from .gemini_ocr import GeminiOCR
@@ -154,16 +154,12 @@ class OCRFactory:
 
         # Model-specific factory functions
         general = {
-            "PaddleVL-1.5-OCR": lambda s: cls._create_microsoft_ocr(
-                s, "jzhang533/PaddleOCR-VL-For-Manga"
-            ),
+            "PaddleVL-1.5-OCR": lambda s: cls._create_microsoft_ocr(s, "PaddlePaddle/PaddleOCR-VL-1.5"),
             "Google Cloud Vision": cls._create_google_ocr,
             "GPT-4.1-mini": lambda s: cls._create_gpt_ocr(s, ocr_model),
-            "PaddleVL-Manga": lambda s: cls._create_gemini_ocr(
-                s, "PaddlePaddle/PaddleOCR-VL-1.5"
-            ),
+            "PaddleVL-Manga": lambda s: cls._create_gemini_ocr(s, "jzhang533/PaddleOCR-VL-For-Manga"),
         }
-        
+
         make_japanese = lambda s: cls._create_manga_ocr(s, effective_backend)
         make_korean = lambda s: cls._create_ppocr(s, 'ko', effective_backend)
         make_chinese = lambda s: cls._create_ppocr(s, 'ch', effective_backend)
@@ -201,6 +197,14 @@ class OCRFactory:
         }
 
         # Check if we have a specific model factory
+        #print(ocr_model)
+        #if ocr_model == "Gemini-2.5-Flash-Lite":
+        #    ocr_model = "PaddleVL-Manga"
+        #
+        #if ocr_model == "Microsoft OCR":
+        #    ocr_model = "PaddleVL-1.5-OCR"
+        #print(ocr_model)   
+
         if ocr_model in general:
             return general[ocr_model](settings)
 
@@ -209,16 +213,6 @@ class OCRFactory:
             return language_factories[source_lang_english](settings)
 
         return 
-
-    @staticmethod
-    def _create_microsoft_ocr(settings) -> OCREngine:
-        credentials = settings.get_credentials(settings.ui.tr("Microsoft Azure"))
-        engine = MicrosoftOCR()
-        engine.initialize(
-            api_key=credentials['api_key_ocr'],
-            endpoint=credentials['endpoint']
-        )
-        return engine
 
     @staticmethod
     def _create_google_ocr(settings) -> OCREngine:
@@ -260,7 +254,7 @@ class OCRFactory:
         else:
             engine = PororoOCREngineONNX()
             engine.initialize(device=device, use_text_lines=True)
-        
+
         return engine
 
     @staticmethod
@@ -274,13 +268,7 @@ class OCRFactory:
         else:
             engine = PPOCRv5Engine()
             engine.initialize(lang=lang, device=device, use_text_lines=True)
-        
-        return engine
 
-    @staticmethod
-    def _create_gemini_ocr(settings, model) -> OCREngine:
-        engine = GeminiOCR()
-        engine.initialize(settings, model)
         return engine
 
     @staticmethod

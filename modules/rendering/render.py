@@ -18,7 +18,7 @@ from modules.utils.textblock import TextBlock
 from modules.utils.textblock import adjust_blks_size
 from modules.detection.utils.geometry import shrink_bbox
 from app.ui.canvas.text.vertical_layout import VerticalTextDocumentLayout
-from modules.utils.language_utils import get_language_code, is_no_space_lang
+from modules.utils.language_utils import get_language_code, is_no_space_lang, is_vertical_language_code
 
 from dataclasses import dataclass
 
@@ -47,17 +47,6 @@ def array_to_pil(rgb_image: np.ndarray):
 def pil_to_array(pil_image: Image):
     return np.array(pil_image)
 
-
-def is_vertical_language_code(lang_code: str | None) -> bool:
-    """Return True if the language code should use vertical layout.
-
-    Currently treats Japanese and simplified/traditional Chinese as
-    vertical-capable languages.
-    """
-    if not lang_code:
-        return False
-    code = lang_code.lower()
-    return code in {"zh-cn", "zh-tw", "ja"}
 
 def is_vertical_block(blk, lang_code: str | None) -> bool:
     """Return True if this block should be rendered vertically.
