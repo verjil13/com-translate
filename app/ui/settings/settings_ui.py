@@ -170,11 +170,13 @@ class SettingsPageUI(QtWidgets.QWidget):
         """Update only server-backed choices; local tools remain bundled."""        
         translators = [item for item in catalog["translators"] if isinstance(item, dict) and item.get("id")]
         #ocr_models = [item for item in catalog["ocr_models"] if isinstance(item, dict) and item.get("id")] #загрузка списка моделей с сервера
+
         self.llms_page.set_image_context_credits(int(catalog.get("image_context_credits", 1)))
         if translators:
             self._replace_combo_items(self.translator_combo, translators, include_custom=True)
             self.supported_translators = [self._catalog_label(item, is_ocr=False) for item in translators] + [self.tr("Custom")]
             set_combo_box_width(self.translator_combo, self.supported_translators)
+
         #if ocr_models:
         #    self._replace_combo_items(self.ocr_combo, ocr_models)
         #    self.ocr_engines = [self._catalog_label(item, is_ocr=True) for item in ocr_models]

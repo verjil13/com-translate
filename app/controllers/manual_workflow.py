@@ -491,6 +491,7 @@ class ManualWorkflowController:
         )
 
     def update_translated_text_items(self, single_blk: bool) -> None:
+
         def set_new_text(
             text_item: TextBlockItem, 
             wrapped: str, 

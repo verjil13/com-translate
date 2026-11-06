@@ -50,6 +50,7 @@ class ClientCatalog(QObject):
                 {"id": "Default", "label": "Default", "credits": 0},
                 {"id": "PaddleVL-1.5-OCR", "label": "PaddleVL-1.5-OCR", "credits": 0},
                 {"id": "PaddleVL-Manga", "label": "PaddleVL-Manga", "credits": 0},
+
             ],
             "image_context_credits": 1,
             "target_languages": [

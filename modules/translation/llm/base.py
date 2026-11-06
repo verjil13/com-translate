@@ -40,6 +40,7 @@ class BaseLLMTranslation(LLMTranslation):
         self.temperature = 1.0
         self.top_p = 0.95
         self.max_tokens = 3000 #5000
+
         
     def translate(self, blk_list: list[TextBlock], image: np.ndarray, extra_context: str) -> list[TextBlock]:
         """
